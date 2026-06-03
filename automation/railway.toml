@@ -1,0 +1,11 @@
+# Railway config for the automation worker service.
+# In Railway, set this service's Root Directory to "automation".
+# This is a background worker — it does NOT need a public domain.
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "node automation.js"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5

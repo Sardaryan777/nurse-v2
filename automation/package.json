@@ -1,0 +1,14 @@
+{
+  "name": "nursing-automation-worker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node automation.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "googleapis": "^144.0.0",
+    "puppeteer": "^23.10.4"
+  }
+}

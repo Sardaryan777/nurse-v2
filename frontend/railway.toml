@@ -1,0 +1,10 @@
+# Railway config for the generator website service.
+# In Railway, set this service's Root Directory to "frontend".
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "node server.js"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
