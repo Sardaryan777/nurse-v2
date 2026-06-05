@@ -69,8 +69,8 @@ Prev topics: {PREV}
 Meds: {MEDS}
 
 Write ONE paragraph. ALWAYS start with this fixed opening (copy exactly):
-"Patient/caregiver was contacted prior to visit, there was no exposure or any sign and symptoms of COVID-19 present. Homebound status and safety measures assessed. Skilled nursing evaluation and assessment done of all body systems. Vitals signs taken and recorded. Lung and heart sounds auscultated. Pain level assessed. Assessed patients' compliance to the prescribed medications and diet. Reminded patient to take daily medications as ordered by M.D. Hand washing done before and after patient's care."
-THEN write 3-4 sentences of clinical education about {TOPIC}: explain the condition, key symptoms, management approach, and when to notify MD. Aim for 70-100 words. Be clear and clinical. Do NOT pad or repeat.
+"Patient/caregiver was contacted prior to visit. Homebound status and safety measures assessed. Skilled nursing evaluation and assessment done of all body systems. Vitals signs taken and recorded. Lung and heart sounds auscultated. Pain level assessed. Assessed patients' compliance to the prescribed medications and diet. Reminded patient to take daily medications as ordered by M.D. Hand washing done before and after patient's care."
+THEN write 5-6 sentences of clinical education about {TOPIC}: (1) explain the disease/condition in detail, (2) describe signs and symptoms patient should know, (3) outline management and treatment strategies, (4) include medication details if relevant, (5) state clearly when to notify MD or call 911, (6) reinforce self-care or lifestyle measures. Aim for 130-160 words. Be thorough and educational. Do NOT repeat the same idea twice.
 RULES: Different wording from prior notes. Vary synonyms. {STAGE} focus: SOC=acute, RECERT=progression, DISCHARGE=independence. Return ONLY the paragraph, no labels.`;
 
 // ── VARIATION PROMPT ──────────────────────────────────────────────────────────
@@ -201,7 +201,12 @@ async function fileToBase64(file) {
 
 // ── BUILD HTML NOTE ───────────────────────────────────────────────────────────
 function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topic, intervention, lastBM, isLastNote}) {
-  const bh = v => v?"&#9746;":"&#9744;";
+  // CSS-drawn checkbox: a real bordered square (empty, or with × when checked).
+  // Font-independent, so it renders the same in any browser AND in the headless
+  // Chrome that the automation uses to make PDFs.
+  const bh = v => v
+    ? `<span style="display:inline-block;width:9px;height:9px;line-height:8px;text-align:center;border:1px solid #000;font-size:8px;font-weight:bold;vertical-align:middle;margin:0 1px">&#215;</span>`
+    : `<span style="display:inline-block;width:9px;height:9px;border:1px solid #000;vertical-align:middle;margin:0 1px"></span>`;
   const ms = poc.mentalStatus||{};
   const hp = poc.hasPleurX||false;
   const isSOC = poc.stage==="SOC";
@@ -355,7 +360,7 @@ ${bh(true)} ID/insurance ,Face</div>
 <!-- RIGHT COLUMN -->
 <div class="right">
 <div class="sec">
-<b>Vital Signs</b>: T: <u>${vs.temp}</u> HR:<u>${vs.hr}</u>bpm &nbsp;RR: <u>${vs.rr}</u>/min BS <span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span> F&#9744;R&#9744; Repeat <span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span><br>
+<b>Vital Signs</b>: T: <u>${vs.temp}</u> HR:<u>${vs.hr}</u>bpm &nbsp;RR: <u>${vs.rr}</u>/min BS <span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span> F${bh(false)}R${bh(false)} Repeat <span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span><br>
 BP: <b>R / L</b> Lying <span style="border-bottom:1px solid #000;display:inline-block;width:16px"></span> Sitting <u>${vs.bp}</u>mmHg &nbsp;Standing <span style="border-bottom:1px solid #000;display:inline-block;width:28px"></span> &nbsp;Repeat: <span style="border-bottom:1px solid #000;display:inline-block;width:18px"></span>mmHg &nbsp;Wt: <u>${poc.patient?.weight||poc.weight||""}</u>
 </div>
 
@@ -378,21 +383,14 @@ ${bh(true)} Others: requires considerable and taxing efforts to leave home even 
 <div class="sec"><b>PLAN</b> (for next visit). ${isLastNote?"Implementation of plan of care. RN to assess patient for possible discharge.":"Continue plan of care approved by MD."}</div>
 
 <div class="sec sm">
-<b>UNIVERSAL PRECAUTIONS UTILIZED: </b>${bh(true)}COVID-19 precaution /prevention/ symptoms ${bh(true)} medical waste disposal ${bh(true)}gloves ${bh(true)}mask ${bh(true)} hand washing ${bh(false)}goggles<br>
+<b>UNIVERSAL PRECAUTIONS UTILIZED: </b>${bh(true)}Medical waste disposal ${bh(true)}gloves ${bh(true)}mask ${bh(true)} hand washing ${bh(false)}goggles<br>
 ${bh(false)}gown ${bh(false)}sharps disposal ${bh(false)}red bagging ${bh(false)}double bagging ${bh(true)} Infection Control:<br>
 ${bh(true)} Knowledgeable ${bh(false)} SHARPS box in home &nbsp;observed/taught &nbsp;Safety:${bh(true)} Environment assessed for safety<br>
 ${bh(true)} Equipment inspected ${bh(false)} In Good Condition ${bh(true)} Yes ${bh(false)} No<br>
 ${bh(true)} Medication Regimen Reviewed &nbsp;${bh(true)} Patient has been identified with two forms of ID &nbsp;Comments: ${bh(true)}<br>
-No signs/symptoms of Covid-19 noted.<br>
-${bh(true)}Medication reconciliation<br>
-Covid-19 Screening: Has the SN experienced fever, cough, sore throat, SOB, chest tightness, weakness, recent loss of taste, and smell, or been in contact with a person who has travelled in the last 14 days of has been exposed to Covid-19 ${bh(false)}Yes ${bh(true)} No</div>
+${bh(true)}Medication reconciliation</div>
 
-<div class="sec sm">
-<b>COVID19- SCREENING:</b><br>
-${bh(true)} Followed COVID-19 Infection precaution guidelines for Health Care Professionals.<br>
-Is Patient/PCG reporting symptoms of ${bh(false)} SOB ${bh(false)}Cough ${bh(false)} High fever ${bh(false)}Sore Throat ${bh(false)} Chills<br>
-${bh(false)}Repeated shaking with Chills ${bh(false)} Muscle pain ${bh(false)} Headache ${bh(false)} New loss of taste or smell at the time of Visit or last 48 hours? ${bh(true)} No ${bh(false)} Yes<br>
-** Instructed Patient/PCG on Covid-19 Prevention Measures provided by CDC..**</div>
+
 
 <div class="sec sm">
 <b>COMMUNICATION: </b>${bh(false)}MD ${bh(false)}PT ${bh(false)}OT ${bh(false)}ST ${bh(false)}MS ${bh(false)}RN ${bh(false)}LVN ${bh(false)}CHHA<br>
@@ -541,16 +539,13 @@ export default function App() {
   };
 
   // ── AUTOMATION BRIDGE ────────────────────────────────────────────────────────
-  // Exposes a stable programmatic API on window so the Puppeteer worker drives
-  // the app without fighting the calendar/time popovers. The human UI is
-  // unchanged. Re-registered whenever the closed-over state changes.
+  // Stable programmatic API used by the Puppeteer worker. Human UI is unchanged.
   useEffect(() => {
     window.__automation = {
       version: 1,
       ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
-      // dateStrs: array of "MM/DD/YYYY"
       setDates: (dateStrs) => {
         const ds = (dateStrs||[]).map(s => {
           const [m,d,y] = String(s).split("/").map(Number);
@@ -558,7 +553,6 @@ export default function App() {
         }).filter(d=>!isNaN(d)).sort((a,b)=>a-b);
         setDates(ds);
       },
-      // map: { "MM/DD/YYYY": { inH, inM, inAP, outH, outM, outAP } }
       setTimes: (map) => {
         setDateTimes(prev => {
           const next = { ...prev };
@@ -579,10 +573,8 @@ export default function App() {
         status: genStatus,
         error
       }),
-      // returns [{ filename, html }, ...] for each generated note
       getNotesHTML: () => notes.map(noteToHTML)
     };
-    return () => { /* keep last instance available */ };
   }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, notes, genStatus, error]);
 
   // Stage badge
