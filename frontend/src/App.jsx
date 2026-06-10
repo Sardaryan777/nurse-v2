@@ -201,12 +201,13 @@ async function fileToBase64(file) {
 
 // ── BUILD HTML NOTE ───────────────────────────────────────────────────────────
 function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topic, intervention, lastBM, isLastNote}) {
-  // CSS-drawn checkbox: a real bordered square (empty, or with × when checked).
-  // Font-independent, so it renders the same in any browser AND in the headless
-  // Chrome that the automation uses to make PDFs.
-  const bh = v => v
-    ? `<span style="display:inline-block;width:9px;height:9px;line-height:8px;text-align:center;border:1px solid #000;font-size:8px;font-weight:bold;vertical-align:middle;margin:0 1px">&#215;</span>`
-    : `<span style="display:inline-block;width:9px;height:9px;border:1px solid #000;vertical-align:middle;margin:0 1px"></span>`;
+  // Checkbox = real font glyph (☐ empty / ☒ checked). Font metrics handle the
+  // alignment so it looks clean. We force a font-family that exists both in the
+  // browser (Segoe UI Symbol on Windows) AND in the robot's Linux container
+  // (DejaVu Sans, installed via the automation Dockerfile), so it renders the
+  // same everywhere.
+  const cbFont = "'Segoe UI Symbol','DejaVu Sans','Arial Unicode MS',sans-serif";
+  const bh = v => `<span style="font-family:${cbFont}">${v ? "&#9746;" : "&#9744;"}</span>`;
   const ms = poc.mentalStatus||{};
   const hp = poc.hasPleurX||false;
   const isSOC = poc.stage==="SOC";
