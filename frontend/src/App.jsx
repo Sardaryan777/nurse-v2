@@ -206,8 +206,11 @@ function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topi
   // browser (Segoe UI Symbol on Windows) AND in the robot's Linux container
   // (DejaVu Sans, installed via the automation Dockerfile), so it renders the
   // same everywhere.
+  // line-height:0 stops the (taller) symbol font from inflating each line's
+  // height, which is what pushed the note onto a 2nd page. font-size pins the
+  // box to the body text size so it looks consistent.
   const cbFont = "'Segoe UI Symbol','DejaVu Sans','Arial Unicode MS',sans-serif";
-  const bh = v => `<span style="font-family:${cbFont}">${v ? "&#9746;" : "&#9744;"}</span>`;
+  const bh = v => `<span style="font-family:${cbFont};font-size:8.4pt;line-height:0">${v ? "&#9746;" : "&#9744;"}</span>`;
   const ms = poc.mentalStatus||{};
   const hp = poc.hasPleurX||false;
   const isSOC = poc.stage==="SOC";
@@ -219,7 +222,7 @@ function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topi
 *{box-sizing:border-box;margin:0;padding:0}
 @page{size:A4 portrait;margin:10mm 8mm 10mm 8mm}
 html,body{
-  font-family:"Times New Roman",Times,serif;
+  font-family:"Times New Roman","Liberation Serif",Times,serif;
   font-size:8.4pt;
   line-height:1.35;
   background:#fff;
