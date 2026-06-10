@@ -7,6 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     ca-certificates \
     fonts-liberation \
+    fonts-dejavu \
+    fonts-dejavu-core \
+    fonts-dejavu-extra \
     fonts-noto-color-emoji \
     libnss3 \
     libatk-bridge2.0-0 \
