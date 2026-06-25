@@ -92,11 +92,14 @@ export async function runGenerator(opts) {
     await sleep(300);
 
     // 5. Click Generate and wait for completion.
+    // Each note is its own Claude call, so scale the timeout with the number of
+    // dates (~20s per note) with a 5-minute floor.
+    const genTimeout = Math.max(300000, dates.length * 20000);
     await page.evaluate(() => window.__automation.generate());
     const finalState = await waitForState(
       page,
       s => !s.generating && s.noteCount > 0,
-      { timeout: 300000, label: "note generation" }
+      { timeout: genTimeout, label: "note generation" }
     );
 
     // 6. Retrieve generated HTML for every note.
