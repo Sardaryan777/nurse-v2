@@ -8,11 +8,27 @@ function client() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
 
+// Tolerant JSON parser: strips markdown fences, isolates the object, and tries
+// several light repairs (trailing commas, missing commas between objects) before
+// giving up. Models occasionally emit slightly-off JSON; this recovers it.
 function parseJSON(text) {
-  const s = text.indexOf("{");
-  const e = text.lastIndexOf("}");
-  if (s === -1 || e === -1) throw new Error("No JSON found in Claude response");
-  return JSON.parse(text.slice(s, e + 1));
+  let t = String(text).trim();
+  t = t.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const s = t.indexOf("{");
+  const e = t.lastIndexOf("}");
+  if (s === -1 || e === -1) throw new Error("No JSON found in Claude response: " + t.slice(0, 200));
+  const body = t.slice(s, e + 1);
+
+  const attempts = [
+    body,
+    body.replace(/,\s*([}\]])/g, "$1"),                 // remove trailing commas
+    body.replace(/}\s*{/g, "},{").replace(/]\s*\[/g, "],["), // add missing commas between items
+    body.replace(/,\s*([}\]])/g, "$1").replace(/}\s*{/g, "},{")
+  ];
+  for (const a of attempts) {
+    try { return JSON.parse(a); } catch { /* try next */ }
+  }
+  throw new Error("Could not parse JSON from Claude response: " + body.slice(0, 300));
 }
 
 // Extract ONLY the agency name from the PDF.
@@ -21,6 +37,7 @@ export async function extractAgencyName(pdfBuffer) {
   const resp = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 300,
+    temperature: 0,
     messages: [{
       role: "user",
       content: [
@@ -49,7 +66,8 @@ export async function extractVisitsFromEmail(bodyText) {
   const today = new Date();
   const resp = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 1500,
+    max_tokens: 4000,
+    temperature: 0,
     system:
       "You parse scheduling emails for a home-health nursing service. " +
       "Extract the nurse's name and every visit date with its time in and time out. " +
