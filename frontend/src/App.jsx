@@ -429,9 +429,10 @@ function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topi
 
   // Communication section (phase-aware)
   const isFinalDC = phase === "FINAL_DISCHARGE";
-  const commRN = (isFinalDC || phase === "PRE_DISCHARGE");
-  const commSup = isFinalDC; // Supervisor checked ONLY on true final discharge
-  const commRe = isFinalDC ? "DISCHARGE PLANNING / RN NOTIFIED" : (phase === "PRE_DISCHARGE" ? "DISCHARGE PLANNING" : "");
+  const isDischargePlanning = (isFinalDC || phase === "PRE_DISCHARGE");
+  const commRN = isDischargePlanning;   // RN checked on discharge planning + final discharge
+  const commSup = isDischargePlanning;  // Supervisor checked on discharge planning + final discharge
+  const commRe = isDischargePlanning ? "DISCHARGE PLANNING / RN NOTIFIED" : "";
 
     return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Clinical Note – ${poc.patient?.name||""} – ${date}</title>
