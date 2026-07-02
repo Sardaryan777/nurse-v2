@@ -370,8 +370,8 @@ async function fileToBase64(file) {
 // ── BUILD HTML NOTE ───────────────────────────────────────────────────────────
 function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topic, intervention, lastBM, isLastNote, painLevel=4, phase="EARLY", painLoc="lower back"}) {
   // Checkbox = font glyph forced to a symbol font present in both the browser
-  // and the robot's Linux container. line-height:0 stops the taller symbol font
-  // from inflating each line (which otherwise pushes the note to a 2nd page).
+  // and the robot's Linux container. line-height:0 keeps it from pushing the
+  // note onto a 2nd page.
   const cbFont = "'Segoe UI Symbol','DejaVu Sans','Arial Unicode MS',sans-serif";
   const bh = v => `<span style="font-family:${cbFont};font-size:8.4pt;line-height:0">${v ? "&#9746;" : "&#9744;"}</span>`;
   const ms = poc.mentalStatus||{};
@@ -429,9 +429,11 @@ function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topi
 
   // Communication section (phase-aware)
   const isFinalDC = phase === "FINAL_DISCHARGE";
-  const isDischargePlanning = (isFinalDC || phase === "PRE_DISCHARGE");
-  const commRN = isDischargePlanning;   // RN checked on discharge planning + final discharge
-  const commSup = isDischargePlanning;  // Supervisor checked on discharge planning + final discharge
+  // Discharge planning is triggered by phase OR by the teaching topic mentioning discharge
+  const topicMentionsDischarge = String(topic||"").toUpperCase().includes("DISCHARGE");
+  const isDischargePlanning = (isFinalDC || phase === "PRE_DISCHARGE" || topicMentionsDischarge);
+  const commRN = isDischargePlanning;   // RN checked on any discharge planning / final discharge note
+  const commSup = isDischargePlanning;  // Supervisor checked on any discharge planning / final discharge note
   const commRe = isDischargePlanning ? "DISCHARGE PLANNING / RN NOTIFIED" : "";
 
     return `<!DOCTYPE html>
