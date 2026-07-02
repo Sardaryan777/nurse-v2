@@ -32,12 +32,51 @@ function pickVS() {
   const hr = line.match(/HR\s+(\d+)/);
   const rr = line.match(/RR\s+(\d+)/);
   const bp = line.match(/BP Sitting\s+([\d/]+)/);
-  return { temp: t?.[1]||"98.0", hr: hr?.[1]||"76", rr: rr?.[1]||"18", bp: bp?.[1]||"128/80" };
+  // Random blood sugar 90-210 mg/dL for diabetic patients
+  const bs = Math.floor(90 + Math.random()*120);
+  return { temp: t?.[1]||"98.0", hr: hr?.[1]||"76", rr: rr?.[1]||"18", bp: bp?.[1]||"128/80", bs: String(bs) };
 }
 function parseVL(line) { return pickVS(); } // compat
 function fmtDate(d) { if(!d)return""; return `${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}/${d.getFullYear()}`; }
 function fmtDateDot(d) { if(!d)return""; return `${String(d.getMonth()+1).padStart(2,"0")}.${String(d.getDate()).padStart(2,"0")}.${String(d.getFullYear()).slice(2)}`; }
 function fmtTime(h,m,ap) { return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} ${ap}`; }
+
+// Injection site rotation — avoids left arm if restricted
+const INJ_SITES = ["abdomen RUQ","abdomen LUQ","abdomen RLQ","abdomen LLQ","right thigh","left thigh","right upper arm","left upper arm"];
+function getInjSite(index, leftArmRestricted) {
+  const sites = leftArmRestricted ? INJ_SITES.filter(s => s !== "left upper arm") : INJ_SITES;
+  return sites[index % sites.length];
+}
+
+// Parse bulk date/time input: "03/25/2026 11:00-11:45" per line → [{date, timeIn, timeOut}]
+function parseBulkInput(text) {
+  const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+  const entries = [];
+  for (const line of lines) {
+    // Match MM/DD/YYYY then two times. Times may be 24hr (07:00) or 12hr with am/pm (08:00 pm)
+    const m = line.match(/(\d{1,2}[\/\.]\d{1,2}[\/\.]\d{2,4})\s+(\d{1,2}:\d{2}(?:\s*[apAP][mM])?)\s*(?:-|–|—|to)\s*(\d{1,2}:\d{2}(?:\s*[apAP][mM])?)/i);
+    if (m) {
+      const dateParts = m[1].split(/[\/\.]/);
+      let yr = dateParts[2]; if (yr.length === 2) yr = "20" + yr;
+      const dateObj = new Date(parseInt(yr), parseInt(dateParts[0])-1, parseInt(dateParts[1]));
+      dateObj.setHours(12,0,0,0);
+      // Normalize times: trim, uppercase am/pm
+      const normTime = t => t.trim().replace(/\s*([apAP])[mM]/, (x,a)=>" "+a.toUpperCase()+"M");
+      entries.push({ date: dateObj, timeIn: normTime(m[2]), timeOut: normTime(m[3]), raw: line });
+    } else {
+      // Try just a date with no time
+      const dm = line.match(/(\d{1,2}[\/\.]\d{1,2}[\/\.]\d{2,4})/);
+      if (dm) {
+        const dp = dm[1].split(/[\/\.]/);
+        let yr = dp[2]; if (yr.length === 2) yr = "20" + yr;
+        const dateObj = new Date(parseInt(yr), parseInt(dp[0])-1, parseInt(dp[1]));
+        dateObj.setHours(12,0,0,0);
+        entries.push({ date: dateObj, timeIn: "", timeOut: "", raw: line });
+      }
+    }
+  }
+  return entries;
+}
 
 const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAYS=["Su","Mo","Tu","We","Th","Fr","Sa"];
@@ -46,38 +85,167 @@ const DAYS=["Su","Mo","Tu","We","Th","Fr","Sa"];
 const EXTRACT_PROMPT = `You are an expert LVN. Extract ALL information from this CMS-485 Plan of Care and return ONLY valid compact JSON (no markdown, no backticks, no explanation).
 
 Detect stage automatically:
-- If "Start of Care", "SOC", "Admit" → stage = "SOC"
+- If "Start of Care", "SOC", "Admit" → stage = "SOC"  
 - If "Recertif" → stage = "RECERT"
 - If "Discharge" → stage = "DISCHARGE"
 
 Return this exact structure:
-{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","hasPleurX":false,"hasWheelchair":false,"hasWalker":true,"hasCane":false,"o2Sat":"96","mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
+{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"hasWheelchair":false,"hasWalker":true,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
 
 RULES:
-- stage: exactly "SOC", "RECERT", or "DISCHARGE"
+- stage: exactly "SOC", "RECERT", or "DISCHARGE"  
 - diagnoses: ["CODE - Description", ...]
 - medications: ["full medication string", ...]
 - teachingTopics: ordered list of 9 SHORT ALL-CAPS topic labels (2-5 words each). Derived from diagnoses, most acute first. For RECERT/DISCHARGE: last topic = "MEDICATION SAFETY & DISCHARGE PLANNING". Examples: "ACUTE RESPIRATORY FAILURE", "HOME SAFETY & FALL PRECAUTIONS", "ANXIETY & LORAZEPAM MEDICATION", "BENIGN PROSTATIC HYPERPLASIA", "BIPOLAR DISORDER", "DEPRESSION & CITALOPRAM MEDICATION", "DIFFICULTY IN WALKING", "HYPERLIPIDEMIA & ROSUVASTATIN", "PAIN MANAGEMENT & TYLENOL"
-- hasPleurX: true if PleurX catheter mentioned in document`;
+- hasPleurX: true if PleurX catheter mentioned in document\n- hasParalysis: true ONLY if paralysis, paraplegia, hemiplegia, or quadriplegia is explicitly diagnosed. Default false — do NOT assume paralysis from weakness or difficulty walking\n- hasCaregiver: true if PCG, caregiver, family member, or caregiver involvement is documented in the POC. Default false
+- isDiabetic: true if diabetes, insulin, blood sugar monitoring, or diabetic care mentioned
+- leftArmRestricted: true if left mastectomy, left-arm restriction, or "no BP/blood draw left arm" mentioned
+- injectable: scan medications AND nursing orders for any INJECTABLE medication (insulin, Lantus, Solostar, Humalog, Novolog, enoxaparin, Lovenox, B12, etc). If found, set found=true and extract: name (e.g. "Lantus Solostar Insulin"), dose (e.g. "30 units"), route ("subcutaneous"), frequency ("twice daily" or "once daily"), instruction (brief admin note). If no injectable, found=false.`;
 
 // ── NOTE GENERATION PROMPT ────────────────────────────────────────────────────
-const NOTE_PROMPT = `You are an LVN writing a concise home health clinical note intervention paragraph.
+const NOTE_PROMPT = `You are an experienced LVN writing a home health clinical note INTERVENTION section. Write real, concise documentation — NOT a textbook essay. 180-320 words total.
 
-Stage: {STAGE} | Topic: {TOPIC} | Note #{NUM}/{TOTAL}
-Diagnoses: {DIAGNOSES}
-Prev topics: {PREV}
-Meds: {MEDS}
+STRICT DATA RULE: Only mention diagnoses, medications, treatments, and findings that are listed below. Never invent inhalers, insulin, oxygen, wounds, catheters, diabetes, COPD, or any condition not in the data.
 
-Write ONE paragraph. ALWAYS start with this fixed opening (copy exactly):
-"Patient/caregiver was contacted prior to visit. Homebound status and safety measures assessed. Skilled nursing evaluation and assessment done of all body systems. Vitals signs taken and recorded. Lung and heart sounds auscultated. Pain level assessed. Assessed patients' compliance to the prescribed medications and diet. Reminded patient to take daily medications as ordered by M.D. Hand washing done before and after patient's care."
-THEN write 5-6 sentences of clinical education about {TOPIC}: (1) explain the disease/condition in detail, (2) describe signs and symptoms patient should know, (3) outline management and treatment strategies, (4) include medication details if relevant, (5) state clearly when to notify MD or call 911, (6) reinforce self-care or lifestyle measures. Aim for 130-160 words. Be thorough and educational. Do NOT repeat the same idea twice.
-RULES: Different wording from prior notes. Vary synonyms. {STAGE} focus: SOC=acute, RECERT=progression, DISCHARGE=independence. Return ONLY the paragraph, no labels.`;
+VISIT CONTEXT:
+- Teaching topic: {TOPIC}
+- Visit phase: {PHASE}
+- Pain level: {PAIN}/10  |  Pain location: {PAINLOC}
+- Pain medication available: {PAINMED}
+- Subject: {SUBJECT}  (write for this subject — "patient" or "patient/caregiver")
+- Note #{NUM} of {TOTAL}
+- Diagnoses (ONLY these): {DIAGNOSES}
+- Medications (ONLY these): {MEDS}
+- Visit-specific observations to include: {OBS}
+- Respiratory medication present: {HAS_RESP}
+{INJECTION_INFO}
+
+Write the INTERVENTION as 4 short blocks (concise, clinical):
+
+BLOCK 1 — LVN visit actions (3-4 sentences):
+"{SUBJECT_CAP} was contacted prior to visit. LVN completed skilled observation and focused assessment/data collection per plan of care. Vital signs obtained and recorded. Lung and heart sounds monitored. Pain level reviewed. Medication compliance, diet adherence, homebound status, and safety measures were reviewed. Hand washing performed before and after patient care."
+
+BLOCK 2 — Pain + visit observations (3-4 sentences):
+State pain: "Patient reports dull {PAINLOC} pain rated {PAIN}/10" + phase wording:
+- EARLY (5): "increased with prolonged standing and ambulation, relieved partially by rest, repositioning, and {PAINMED_PHRASE}."
+- MIDDLE (3-4): "improved compared with prior visit; better controlled with rest, repositioning, gentle movement, and {PAINMED_PHRASE}."
+- LATE/DISCHARGE (2): "pain is controlled with current measures; no new acute pain complaints reported this visit."
+Then weave in the visit-specific observations naturally.
+{INJECTION_SENTENCE}
+
+BLOCK 3 — Teaching (4-6 sentences) on {TOPIC}, individualized to the patient's ACTUAL diagnoses/meds. If respiratory teaching and NO respiratory med present, do NOT mention inhalers/nebulizers — instead teach avoiding irritants, pacing activity, monitoring symptoms. Only name medications from the list above.
+
+BLOCK 4 — MD/911 (1-2 sentences): when to notify MD (worsening pain, uncontrolled BP, new dizziness, falls, signs of infection, change in condition) and call 911 (chest pain, severe breathing difficulty, stroke symptoms, loss of consciousness, serious fall injury).
+
+RULES: Never write his/her, he/she, s/he, their, or [placeholders]. Never say "evaluation and assessment of all body systems" (RN-level) — use LVN wording (observed, monitored, reviewed, reinforced). Vary wording from prior notes. IF PHASE IS FINAL_DISCHARGE: do NOT write "continues to require skilled observation", "continued skilled teaching", "needs further assessment", "requires follow-up teaching", or "continue plan of care" — instead state that skilled nursing goals have been met / maximum benefit achieved and patient is appropriate for discharge. Return ONLY the paragraph text, no block labels.`;
 
 // ── VARIATION PROMPT ──────────────────────────────────────────────────────────
 const VARIATION_PROMPT = `Rewrite this nursing intervention paragraph with COMPLETELY DIFFERENT wording, sentence structure, and phrasing. Keep ALL the same clinical meaning and actions. Use synonyms throughout. Change sentence order. Must sound like a different nurse wrote it on a different day. Return ONLY the rewritten text, nothing else.
 
 Original:
 {TEXT}`;
+
+// Pain level by visit: starts 5/10, gradually improves to 2/10
+function getPainLevelByVisit(index, totalVisits) {
+  if (totalVisits <= 1) return 5;
+  const startPain = 5, endPain = 2;
+  const progress = index / (totalVisits - 1);
+  const pain = Math.round(startPain - progress * (startPain - endPain));
+  return Math.max(endPain, Math.min(startPain, pain));
+}
+
+// Visit phase based on position in episode
+function getVisitPhase(index, totalVisits, dischargeOn, isLast) {
+  if (isLast && dischargeOn) return "FINAL_DISCHARGE";
+  if (dischargeOn && totalVisits > 2 && index >= totalVisits - 2) return "PRE_DISCHARGE";
+  if (totalVisits <= 1) return "EARLY";
+  const p = index / (totalVisits - 1);
+  if (p < 0.34) return "EARLY";
+  if (p < 0.67) return "MIDDLE";
+  return "LATE";
+}
+
+// Skilled observation bank — rotate for visit-specific detail
+const SKILLED_OBS = [
+  "Patient ambulated slowly with walker from living room to chair with supervision.",
+  "Patient required verbal cueing for safe transfer technique.",
+  "Patient denied chest pain, dizziness, or acute shortness of breath at rest.",
+  "Mild shortness of breath noted with exertion, relieved by rest.",
+  "Bilateral lower extremity non-pitting edema remained present without acute worsening.",
+  "Patient demonstrated improved medication recall with caregiver assistance.",
+  "Patient required reinforcement of instructions due to forgetfulness.",
+  "No new open areas or skin breakdown observed or reported.",
+  "Appetite fair; patient encouraged to maintain prescribed diet.",
+  "Patient reported no falls since prior visit.",
+  "Patient used assistive device appropriately after cueing.",
+  "Patient alert and oriented with forgetfulness and intermittent confusion noted.",
+  "Lung sounds clear bilaterally; respirations even and unlabored at rest.",
+  "Patient tolerated visit without acute distress."
+];
+function getObsForVisit(index, count=3) {
+  const out = [];
+  for (let i = 0; i < count; i++) out.push(SKILLED_OBS[(index*3 + i) % SKILLED_OBS.length]);
+  return out;
+}
+
+// ── 485/POC VALIDATION & LVN-SAFETY HELPERS ─────────────────────────────────
+function buildPOCSource(poc) {
+  return [
+    (poc.diagnoses||[]).join(" "),
+    (poc.medications||[]).join(" "),
+    poc.diet||"", poc.homebound||"", poc.allergies||"",
+    (poc.teachingTopics||[]).join(" ")
+  ].join(" ").toLowerCase();
+}
+function pocSupports(poc, term) {
+  return buildPOCSource(poc).includes(String(term||"").toLowerCase());
+}
+function hasRespiratoryMed(meds=[]) {
+  const terms=["albuterol","ventolin","proair","xopenex","atrovent","ipratropium","spiriva","tiotropium","symbicort","advair","breo","trelegy","flovent","pulmicort","budesonide","duoneb","nebulizer","inhaler"];
+  return meds.some(m=>terms.some(t=>String(m).toLowerCase().includes(t)));
+}
+function findPainMed(meds=[]) {
+  const s=meds.map(m=>String(m).toLowerCase());
+  if(s.some(m=>m.includes("tylenol")||m.includes("acetaminophen"))) return "Tylenol";
+  if(s.some(m=>m.includes("meloxicam"))) return "Meloxicam";
+  if(s.some(m=>m.includes("ibuprofen")||m.includes("advil"))) return "Ibuprofen";
+  if(s.some(m=>m.includes("gabapentin"))) return "Gabapentin";
+  if(s.some(m=>m.includes("tramadol"))) return "Tramadol";
+  return null;
+}
+// Pain location consistent with teaching topic + diagnoses
+function getPainLocation(topic, diagnoses) {
+  const t=String(topic||"").toLowerCase();
+  const dx=(diagnoses||[]).join(" ").toLowerCase();
+  const hasBack = t.includes("back")||t.includes("lumbar")||t.includes("dorsalgia")||dx.includes("back")||dx.includes("dorsalgia");
+  const hasKnee = t.includes("knee")||dx.includes("knee");
+  if(hasBack && hasKnee) return "lower back and knee";
+  if(t.includes("left knee")||dx.includes("left knee")) return "left knee";
+  if(hasKnee||dx.includes("osteoarthritis")) return "knee";
+  if(hasBack) return "lower back";
+  return "lower back";
+}
+// Remove unresolved placeholders and RN-level wording from AI text
+function cleanNoteText(text) {
+  return String(text||"")
+    .replace(/\bhis\/her\b/gi,"the patient's")
+    .replace(/\bhe\/she\b/gi,"patient")
+    .replace(/\bhim\/her\b/gi,"patient")
+    .replace(/\bhis or her\b/gi,"the patient's")
+    .replace(/\bs\/he\b/gi,"patient")
+    .replace(/\btheir\b/gi,"the patient's")
+    .replace(/\[patient\]/gi,"patient")
+    .replace(/\[caregiver\]/gi,"caregiver")
+    .replace(/\[medication\]/gi,"the medication")
+    .replace(/\[diagnosis\]/gi,"the diagnosis")
+    .replace(/comprehensive assessment/gi,"focused assessment/data collection")
+    .replace(/evaluation and assessment done of all body systems/gi,"skilled observation and focused assessment/data collection per plan of care")
+    .replace(/Skilled nursing evaluation and assessment done of all body systems/gi,"LVN completed skilled observation and focused assessment/data collection per plan of care")
+    .replace(/\s{2,}/g," ")
+    .trim();
+}
+// Detect final discharge visit by date vs cert end / last scheduled
+function normDate(d){ if(!d)return null; const x=new Date(d); x.setHours(0,0,0,0); return x; }
 
 // ── NAME AUTOCOMPLETE ─────────────────────────────────────────────────────────
 function NameAutocomplete({ value, onChange }) {
@@ -185,7 +353,7 @@ function TimePicker({ label, hour, minute, ampm, onChange }) {
   );
 }
 
-// ── API HELPER (routed through server-side proxy; key never reaches browser) ──
+// ── API HELPER ────────────────────────────────────────────────────────────────
 async function callAPI(messages, system="", maxTokens=8000) {
   const resp = await fetch("/api/claude", {
     method:"POST", headers:{"Content-Type":"application/json"},
@@ -200,23 +368,72 @@ async function fileToBase64(file) {
 }
 
 // ── BUILD HTML NOTE ───────────────────────────────────────────────────────────
-function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topic, intervention, lastBM, isLastNote}) {
-  // Checkbox = real font glyph (☐ empty / ☒ checked). Font metrics handle the
-  // alignment so it looks clean. We force a font-family that exists both in the
-  // browser (Segoe UI Symbol on Windows) AND in the robot's Linux container
-  // (DejaVu Sans, installed via the automation Dockerfile), so it renders the
-  // same everywhere.
-  // line-height:0 stops the (taller) symbol font from inflating each line's
-  // height, which is what pushed the note onto a 2nd page. font-size pins the
-  // box to the body text size so it looks consistent.
+function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topic, intervention, lastBM, isLastNote, painLevel=4, phase="EARLY", painLoc="lower back"}) {
+  // Checkbox = font glyph forced to a symbol font present in both the browser
+  // and the robot's Linux container. line-height:0 stops the taller symbol font
+  // from inflating each line (which otherwise pushes the note to a 2nd page).
   const cbFont = "'Segoe UI Symbol','DejaVu Sans','Arial Unicode MS',sans-serif";
   const bh = v => `<span style="font-family:${cbFont};font-size:8.4pt;line-height:0">${v ? "&#9746;" : "&#9744;"}</span>`;
   const ms = poc.mentalStatus||{};
+  // Pain medication driven ONLY by 485/POC medication list
+  const _painMed = findPainMed(poc.medications);
+  const painMedText = _painMed==="Tylenol" ? "Tylenol / Acetaminophen as ordered"
+                    : _painMed ? (_painMed + " as ordered")
+                    : "pain management measures per MD orders";
+  const painControlLine = `rest, repositioning, gentle activity, and ${painMedText}`;
   const hp = poc.hasPleurX||false;
   const isSOC = poc.stage==="SOC";
   const ul = (v,w) => `<span style="border-bottom:1px solid #000;display:inline-block;min-width:${w||60}px;padding-left:2px;vertical-align:bottom">${v||""}</span>`;
 
-  return `<!DOCTYPE html>
+    // Caregiver-aware subject
+  const cg = poc.hasCaregiver || false;
+  const subj = cg ? "Patient/caregiver" : "Patient";
+  const cgClause = cg ? " and caregiver is able to assist with ongoing care needs" : "";
+  const cgAssist = cg ? " Patient continues to require caregiver assistance for safety and medication organization;" : "";
+
+  // Phase-aware Response to Treatment (no contradictions, caregiver-aware)
+  let responseText;
+  if (phase === "FINAL_DISCHARGE") {
+    // Conditional clauses — only if supported by 485/POC
+    const dxAll = (poc.diagnoses||[]).join(" ").toLowerCase();
+    const hasSeizure = dxAll.includes("seizure")||dxAll.includes("epilep")||pocSupports(poc,"seizure");
+    const hasGU = dxAll.includes("bph")||dxAll.includes("prostat")||dxAll.includes("urinary")||dxAll.includes("retention")||dxAll.includes("frequency")||dxAll.includes("urgency");
+    const items = ["discharge instructions","medication safety","fall precautions","medication regimen"];
+    if (hasSeizure) items.push("seizure precautions");
+    if (hasGU) items.push("urinary symptom reporting parameters");
+    const itemList = items.join(", ") + ", and when to notify MD or call 911";
+    if (cg) {
+      responseText = `${bh(true)}Patient${bh(true)}PCG Patient/caregiver verbalized understanding of ${itemList}. Patient remains forgetful and requires caregiver support for safety and medication organization; however, skilled nursing goals have been met / maximum benefit achieved per plan of care, and caregiver is able to assist with ongoing care needs. Patient is appropriate for discharge from skilled nursing services at this time.`;
+    } else {
+      responseText = `${bh(true)}Patient${bh(false)}PCG Patient verbalized understanding of ${itemList}. Skilled nursing goals have been met / maximum benefit achieved per plan of care. Patient is appropriate for discharge from skilled nursing services at this time.`;
+    }
+  } else if (phase === "PRE_DISCHARGE") {
+    responseText = `${bh(true)}Patient${bh(cg)}PCG ${subj} verbalized fair understanding of discharge planning instructions. Patient continues to require ${cg?"caregiver support and ":""}reinforcement due to forgetfulness and fall risk. Discharge readiness will be evaluated by RN.`;
+  } else if (phase === "LATE") {
+    responseText = `${bh(true)}Patient${bh(cg)}PCG ${subj} verbalized improved understanding of disease management, medication safety, and fall precautions.${cg?" Caregiver remains involved due to patient's forgetfulness and safety risk.":""} Patient continues to require skilled observation and reinforcement.`;
+  } else if (phase === "MIDDLE") {
+    responseText = `${bh(true)}Patient${bh(cg)}PCG ${subj} demonstrated improved recall of prior instructions but continued to require cueing and reinforcement due to forgetfulness and chronic disease complexity. Continued skilled teaching and follow-up indicated.`;
+  } else {
+    responseText = `${bh(true)}Patient${bh(cg)}PCG ${subj} verbalized fair understanding of instructions provided but required frequent repetition due to forgetfulness. Due to chronic disease complexity and fall risk, patient continues to require reinforcement, skilled observation, and follow-up teaching.`;
+  }
+
+  // Phase-aware Plan
+  let planText;
+  if (phase === "FINAL_DISCHARGE") {
+    planText = `Discharge from skilled nursing services. ${subj} instructed to continue medications as ordered, follow prescribed diet, maintain fall precautions, use assistive device as needed, follow up with MD as scheduled, and report any change in condition promptly.`;
+  } else if (phase === "PRE_DISCHARGE") {
+    planText = "Continue plan of care as approved by MD. Discharge planning discussed; RN to assess discharge readiness as indicated.";
+  } else {
+    planText = "Continue plan of care as approved by MD.";
+  }
+
+  // Communication section (phase-aware)
+  const isFinalDC = phase === "FINAL_DISCHARGE";
+  const commRN = (isFinalDC || phase === "PRE_DISCHARGE");
+  const commSup = isFinalDC; // Supervisor checked ONLY on true final discharge
+  const commRe = isFinalDC ? "DISCHARGE PLANNING / RN NOTIFIED" : (phase === "PRE_DISCHARGE" ? "DISCHARGE PLANNING" : "");
+
+    return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Clinical Note – ${poc.patient?.name||""} – ${date}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -281,6 +498,7 @@ html,body{
 }
 </style>
 </head>
+</head>
 <body>
 <div class="wrap">
 <div style="font-size:8.4pt;font-weight:900;margin-bottom:1px">0</div>
@@ -317,10 +535,10 @@ O2sat <u>${poc.o2Sat||"96"}%</u> LPM &nbsp;Other ${isSOC?'<span style="font-size
 ${bh(true)}Stiff joints ${bh(true)}Weakness ${bh(true)}Limited ROM<br>
 ${bh(poc.hasCane||false)}cane ${bh(poc.hasWalker!==false)}walker ${bh(poc.hasWheelchair||false)}W/C ${bh(false)}Contractures ${bh(false)} Foot drop${bh(true)}Unsteady balance ${bh(false)}Other</div>
 
-<div class="sec"><b>PAIN: </b>${bh(false)}No ${bh(true)} Yes Location: <u>back</u><br>
-Intensity: 1 2 3 <u>4</u> 5 6 7 8 9 10<br>
+<div class="sec"><b>PAIN: </b>${bh(false)}No ${bh(true)} Yes Location: <u>${painLoc}</u><br>
+Intensity: ${[1,2,3,4,5,6,7,8,9,10].map(n=>n===painLevel?`<u><b>${n}</b></u>`:n).join(" ")} &nbsp;<b>(${painLevel}/10)</b><br>
 ${bh(false)}Sharp ${bh(true)} Dull ${bh(false)}Radiating ${bh(false)}Burning<br>
-Controlled ${bh(false)}No ${bh(true)} Yes by: rest, repositioning,<br>exercise: Tylenol 500 mg, 1 tab orally every 6 hours as needed for pain</div>
+Controlled ${bh(false)}No ${bh(true)} Yes by: ${painControlLine}</div>
 
 <div class="sec"><div class="st">GASTROINTESTINAL:</div>
 ${bh(false)}Nausea ${bh(false)}Vomiting ${bh(false)}Diarrhea<br>
@@ -346,8 +564,8 @@ Location: ${bh(true)}BLE${bh(true)}Dorsum R/L</div>
 ${bh(true)}Incontinent ${bh(true)}Frequency ${bh(true)}Urgency<br>
 ${bh(false)}Pain ${bh(false)}Nocturia${bh(false)}Burning${bh(false)}Retention<br>
 ${bh(false)}Catheter ${bh(false)}Condom ${bh(false)}IFC${bh(false)}Suprapub<br>
-${bh(false)}Odor ${bh(true)} clear ${bh(false)} Cloudy ${bh(true)}color: yellow &nbsp;${bh(false)}<br>
-Hematuria</div>
+${bh(false)}Foul odor ${bh(true)} clear yellow ${bh(false)} Cloudy<br>
+${bh(true)} No foul odor reported ${bh(false)}Hematuria</div>
 
 <div class="sec"><div class="st">ENDOCRINE:</div>
 ${bh(false)}Weak ${bh(false)}Diaphoretic ${bh(false)}Polyuria<br>
@@ -364,7 +582,7 @@ ${bh(true)} ID/insurance ,Face</div>
 <!-- RIGHT COLUMN -->
 <div class="right">
 <div class="sec">
-<b>Vital Signs</b>: T: <u>${vs.temp}</u> HR:<u>${vs.hr}</u>bpm &nbsp;RR: <u>${vs.rr}</u>/min BS <span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span> F${bh(false)}R${bh(false)} Repeat <span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span><br>
+<b>Vital Signs</b>: T: <u>${vs.temp}</u> HR:<u>${vs.hr}</u>bpm &nbsp;RR: <u>${vs.rr}</u>/min BS ${poc.isDiabetic?`<u>${vs.bs}</u>mg/dL`:`<span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span>`} F${bh(false)}R${bh(false)} Repeat <span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span><br>
 BP: <b>R / L</b> Lying <span style="border-bottom:1px solid #000;display:inline-block;width:16px"></span> Sitting <u>${vs.bp}</u>mmHg &nbsp;Standing <span style="border-bottom:1px solid #000;display:inline-block;width:28px"></span> &nbsp;Repeat: <span style="border-bottom:1px solid #000;display:inline-block;width:18px"></span>mmHg &nbsp;Wt: <u>${poc.patient?.weight||poc.weight||""}</u>
 </div>
 
@@ -374,17 +592,17 @@ ${bh(true)} SOBOE ${bh(true)}Poor Unsteady Gait ${bh(true)}Requires Assist with 
 ${bh(true)} Unable to Negotiate Uneven Surfaces or Steps ${bh(false)} Medical Restrictions<br>
 ${bh(false)}Non-wt bearing &nbsp;${bh(true)}Requires assist with transfer ${bh(true)}Requires assistive device to ambulate ${bh(true)} Confusion${bh(true)}<br>
 Unable to leave home without assistance ${bh(false)}Bedbound<br>
-${bh(true)}Paralysis UE / LE / both ${bh(true)}Requires assist to ambulate ${bh(true)}Poor coordination or balance ${bh(false)}Partial wt bearing<br>
+${bh(poc.hasParalysis||false)}Paralysis UE / LE / both ${bh(true)}Requires assist to ambulate ${bh(true)}Poor coordination or balance ${bh(false)}Partial wt bearing<br>
 ${bh(true)} Others: requires considerable and taxing efforts to leave home even with assistance from caregiver.
 </div>
 
-<div class="sec"><b>ASSESSMENTS:</b> (Problems/Significant Findings) Teaching done regarding <b>${topic}</b></div>
+<div class="sec"><b>ASSESSMENTS:</b> (Problems/Significant Findings) Teaching done regarding <b>${phase==="FINAL_DISCHARGE"?"DISCHARGE FROM SKILLED NURSING SERVICES":topic}</b></div>
 
 <div class="sec intv"><b>INTERVENTIONS:</b> <i>(Specific to problems identified and who was given the instructions)</i> ${intervention}</div>
 
-<div class="sec"><b>RESPONSE TO TREATMENT/INSTRUCTIONS: </b>${bh(true)}Patient${bh(true)}PCG Patient asked appropriate questions and verbalizes fair understanding on given instructions. However, due to forgetfulness unable to retain all information and requires further instruction and repetition of information on regular basis. Needs further assessment of all body systems, vital signs, and teaching on disease process and management.</div>
+<div class="sec"><b>RESPONSE TO TREATMENT/INSTRUCTIONS: </b>${responseText}</div>
 
-<div class="sec"><b>PLAN</b> (for next visit). ${isLastNote?"Implementation of plan of care. RN to assess patient for possible discharge.":"Continue plan of care approved by MD."}</div>
+<div class="sec"><b>PLAN</b> (for next visit). ${planText}</div>
 
 <div class="sec sm">
 <b>UNIVERSAL PRECAUTIONS UTILIZED: </b>${bh(true)}Medical waste disposal ${bh(true)}gloves ${bh(true)}mask ${bh(true)} hand washing ${bh(false)}goggles<br>
@@ -397,9 +615,9 @@ ${bh(true)}Medication reconciliation</div>
 
 
 <div class="sec sm">
-<b>COMMUNICATION: </b>${bh(false)}MD ${bh(false)}PT ${bh(false)}OT ${bh(false)}ST ${bh(false)}MS ${bh(false)}RN ${bh(false)}LVN ${bh(false)}CHHA<br>
-${bh(isLastNote)} Supervisor ${bh(false)} Pharmacist<br>
-Re: ${isLastNote?"POSSIBLE DISCHARGE":""}</div>
+<b>COMMUNICATION: </b>${bh(false)}MD ${bh(false)}PT ${bh(false)}OT ${bh(false)}ST ${bh(false)}MS ${bh(commRN)}RN ${bh(false)}LVN ${bh(false)}CHHA<br>
+${bh(commSup)} Supervisor ${bh(false)} Pharmacist<br>
+Re: ${commRe}</div>
 
 <div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:3px;margin-top:2px;font-size:8.4pt">
   <div style="flex:1"><b>SN NAME</b><br><span style="font-size:8.4pt">${snName||""}</span></div>
@@ -436,6 +654,11 @@ export default function App() {
   const [dates,      setDates]      = useState([]);
   const [dateTimes,  setDateTimes]  = useState({});
   const [previewVS,  setPreviewVS]  = useState(()=>pickVS());
+  const [bidPatient, setBidPatient] = useState(false);
+  const [autoAMPM,   setAutoAMPM]   = useState(false);
+  const [dischargeOn,setDischargeOn]= useState(false);
+  const [bulkText,   setBulkText]   = useState("");
+  const [bulkEntries,setBulkEntries]= useState([]); // parsed [{date,timeIn,timeOut}]
   const fileRef = useRef(null);
 
   const setTimeForDate=(dk,field,val)=>setDateTimes(prev=>({...prev,[dk]:{...(prev[dk]||{inH:null,inM:0,inAP:"AM",outH:null,outM:0,outAP:"AM"}),[field]:val}}));
@@ -469,67 +692,139 @@ export default function App() {
 
   // ── Generate all notes ─────────────────────────────────────────────────────
   const generateAll = async () => {
-    if(!poc||dates.length===0)return;
+    if(!poc) { setError("Please upload and analyze a 485 first."); return; }
+
+    // Build the visit list: bulk entries take priority; else calendar dates; else AM/PM expansion
+    let visits = [];
+    if (bulkEntries.length > 0) {
+      visits = bulkEntries.map(e => ({ date: e.date, dk: fmtDate(e.date), timeIn: e.timeIn, timeOut: e.timeOut }));
+    } else if (dates.length > 0) {
+      const sorted = [...dates].sort((a,b)=>a-b);
+      if (autoAMPM) {
+        // Expand each date into AM + PM
+        sorted.forEach(d => {
+          visits.push({ date:d, dk:fmtDate(d), timeIn:"07:00", timeOut:"07:45" });
+          visits.push({ date:d, dk:fmtDate(d), timeIn:"19:00", timeOut:"19:45" });
+        });
+      } else {
+        sorted.forEach(d => {
+          const t = getTime(fmtDate(d));
+          const tIn = t.inH ? fmtTime(t.inH,t.inM||0,t.inAP) : "";
+          const tOut = t.outH ? fmtTime(t.outH,t.outM||0,t.outAP) : "";
+          visits.push({ date:d, dk:fmtDate(d), timeIn:tIn, timeOut:tOut });
+        });
+      }
+    }
+
+    if (visits.length === 0) { setError("Add visit dates (calendar) or paste bulk dates/times."); return; }
+
+    // Warn if any visit is missing a time
+    const missingTimes = visits.filter(v => !v.timeIn || !v.timeOut);
+    if (missingTimes.length > 0 && bulkEntries.length === 0 && !autoAMPM) {
+      const proceed = window.confirm(`${missingTimes.length} visit(s) have no Time In/Out set. Generate anyway with blank times?\n\nTip: Set times using the time pickers under each date, OR use the Bulk box, OR check Auto-create AM/PM.`);
+      if (!proceed) { return; }
+    }
+
     setGenerating(true); setError(null); setNotes([]);
     try {
-      const sorted = [...dates].sort((a,b)=>a-b);
       const topics = poc.teachingTopics||[];
-      const total = sorted.length;
+      const total = visits.length;
       const generated = [];
       const prevTopics = [];
+      const inj = poc.injectable || {};
+      const useInjection = bidPatient && inj.found;
 
-      for(let i=0;i<sorted.length;i++){
-        const date = sorted[i];
-        const dk = fmtDate(date);
-        const isLast = i===sorted.length-1 && (poc.stage==="RECERT"||poc.stage==="DISCHARGE");
-        const topic = isLast ? "MEDICATION SAFETY & DISCHARGE PLANNING" : (topics[i%topics.length]||"DISEASE PROCESS & MANAGEMENT");
+      for(let i=0;i<visits.length;i++){
+        const v = visits[i];
+        const date = v.date;
+        const dk = v.dk;
+        // Discharge ONLY on the last note, and only if dischargeOn
+        const isLast = dischargeOn && (i === visits.length-1);
+        const phase = getVisitPhase(i, total, dischargeOn, isLast);
+        const painLevel = getPainLevelByVisit(i, total);
+        const obs = getObsForVisit(i, 3);
+        const topic = isLast ? "MEDICATION SAFETY & DISCHARGE PLANNING"
+                    : (phase==="PRE_DISCHARGE" ? "DISCHARGE PLANNING & READINESS REVIEW"
+                    : (topics[i%topics.length]||"DISEASE PROCESS & MANAGEMENT"));
         setGenStatus(`Generating note ${i+1}/${total}: ${topic}...`);
 
-        const diagStr=(poc.diagnoses||[]).slice(0,6).join(", ");
-        const medsStr=(poc.medications||[]).slice(0,4).join(", ");
+        const diagStr=(poc.diagnoses||[]).slice(0,8).join(", ");
+        const medsStr=(poc.medications||[]).slice(0,8).join(", ");
+        const subject = poc.hasCaregiver ? "patient/caregiver" : "patient";
+        const subjectCap = poc.hasCaregiver ? "Patient/caregiver" : "Patient";
+        const painLoc = getPainLocation(topic, poc.diagnoses);
+        const painMed = findPainMed(poc.medications);
+        const painMedPhrase = painMed ? (painMed + " as ordered") : "current pain management measures per MD orders";
+        const hasResp = hasRespiratoryMed(poc.medications) ? "YES" : "NO";
+
+        // Injection details for this visit
+        let injInfo = "", injSentence = "", injSite = "";
+        if (useInjection) {
+          injSite = getInjSite(i, poc.leftArmRestricted);
+          injInfo = `Injectable medication: ${inj.name} ${inj.dose} ${inj.route}, ${inj.frequency}. This visit's injection site: ${injSite}.`;
+          injSentence = `AFTER the opening, add this injection documentation sentence: "SN administered ${inj.name} ${inj.dose} ${inj.route} at ${injSite} as ordered. Injection site assessed before and after administration; no adverse reaction, redness, or skin breakdown noted. Aseptic technique and proper sharps disposal observed." ${poc.isDiabetic?'Also note: "Blood sugar level checked via glucometer and recorded; diabetic foot exam performed."':''}`;
+        }
+
         const prevNote = prevTopics.length>0 ? ` Previously covered: ${prevTopics.slice(-3).join(", ")}. Use different phrasing.` : "";
         const prompt=NOTE_PROMPT
-          .replace(/\{STAGE\}/g,poc.stage||"SOC")
+          .replace(/\{PHASE\}/g,phase)
+          .replace(/\{PAIN\}/g,painLevel)
+          .replace(/\{PAINLOC\}/g,painLoc)
+          .replace(/\{PAINMED\}/g,painMed||"none")
+          .replace(/\{PAINMED_PHRASE\}/g,painMedPhrase)
+          .replace(/\{SUBJECT_CAP\}/g,subjectCap)
+          .replace(/\{SUBJECT\}/g,subject)
+          .replace(/\{HAS_RESP\}/g,hasResp)
           .replace("{TOPIC}",topic)
           .replace("{DIAGNOSES}",diagStr)
           .replace("{NUM}",i+1).replace("{TOTAL}",total)
-          .replace("{PREV}",prevTopics.slice(-3).join(", ")||"none")
-          .replace("{MEDS}",medsStr) + prevNote;
+          .replace("{MEDS}",medsStr)
+          .replace("{OBS}",obs.join(" | "))
+          .replace("{INJECTION_INFO}",injInfo)
+          .replace("{INJECTION_SENTENCE}",injSentence) + prevNote;
 
-        const intervention = await callAPI([{role:"user",content:prompt}],"",800);
+        let intervention = await callAPI([{role:"user",content:prompt}],"",1100);
+        intervention = cleanNoteText(intervention);
+        // Safety net: remove ongoing-care contradictions from final discharge notes
+        if (phase === "FINAL_DISCHARGE") {
+          intervention = intervention
+            .replace(/Patient continues to require skilled observation and reinforcement\.?/gi,"")
+            .replace(/Continued skilled teaching and follow-up indicated\.?/gi,"")
+            .replace(/Patient continues to require skilled observation\.?/gi,"")
+            .replace(/Patient continues to require follow-up teaching\.?/gi,"")
+            .replace(/[Nn]eeds further assessment[^.]*\.?/g,"")
+            .replace(/[Nn]eeds further teaching on disease process and management\.?/g,"")
+            .replace(/Continue plan of care as approved by MD\.?/gi,"")
+            .replace(/\s{2,}/g," ").trim();
+        }
 
         const vs = pickVS();
         setPreviewVS(vs);
-        // Last BM = day before visit
         const bmDate = new Date(date); bmDate.setDate(bmDate.getDate()-1);
-        generated.push({date, dk, topic, intervention:intervention.trim(), vs, isLast, lastBM:fmtDateDot(bmDate), poc});
+        generated.push({
+          date, dk, topic, intervention:intervention.trim(), vs, isLast,
+          lastBM:fmtDateDot(bmDate), poc,
+          timeIn:v.timeIn, timeOut:v.timeOut, injSite,
+          painLevel, phase, painLoc
+        });
         prevTopics.push(topic);
       }
 
       setNotes(generated);
-      setGenStatus(`✅ ${total} note${total>1?"s":""} ready!`);
+      setGenStatus(`✅ ${total} note${total>1?"s":""} ready!${useInjection?` (${total} injections documented)`:""}`);
     } catch(err){ setError("Generation error: "+err.message); setGenStatus(""); }
     finally { setGenerating(false); }
   };
 
-  // ── Build full HTML for a note (shared by download + automation bridge) ──────
-  const noteToHTML = (note) => {
-    const t = getTime(note.dk);
-    const tIn  = t.inH  ? fmtTime(t.inH,  t.inM||0,  t.inAP)  : "";
-    const tOut = t.outH ? fmtTime(t.outH, t.outM||0, t.outAP) : "";
-    const html = buildNoteHTML({poc:note.poc, agencyName, snName, date:note.dk, timeIn:tIn, timeOut:tOut, vs:note.vs, topic:note.topic, intervention:note.intervention, lastBM:note.lastBM, isLastNote:note.isLast});
-    const filename = `Note-${(note.poc?.patient?.name||"patient").replace(/[\s,]+/g,"-")}-${note.dk.replace(/\//g,"-")}.html`;
-    return { filename, html };
-  };
-
-  // ── Download ───────────────────────────────────────────────────────────────
+    // ── Download ───────────────────────────────────────────────────────────────
   const downloadNote = (note) => {
-    const { filename, html } = noteToHTML(note);
+    const html = buildNoteHTML({poc:note.poc, agencyName, snName, date:note.dk, timeIn:note.timeIn||"", timeOut:note.timeOut||"", vs:note.vs, topic:note.topic, intervention:note.intervention, lastBM:note.lastBM, isLastNote:note.isLast, painLevel:note.painLevel, phase:note.phase, painLoc:note.painLoc});
     const blob = new Blob([html],{type:"text/html;charset=utf-8"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href=url;
-    a.download=filename;
+    const tag = note.timeIn ? "-"+note.timeIn.replace(":","") : "";
+    a.download=`Note-${(note.poc?.patient?.name||"patient").replace(/[\s,]+/g,"-")}-${note.dk.replace(/\//g,"-")}${tag}.html`;
     a.style.display="none";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(()=>URL.revokeObjectURL(url),3000);
@@ -538,16 +833,34 @@ export default function App() {
   const downloadAll = () => {
     if(notes.length===0)return;
     notes.forEach((n,i)=>{
-      setTimeout(()=>downloadNote(n), i*700);
+      setTimeout(()=>{
+        const html=buildNoteHTML({poc:n.poc,agencyName,snName,date:n.dk,timeIn:n.timeIn||"",timeOut:n.timeOut||"",vs:n.vs,topic:n.topic,intervention:n.intervention,lastBM:n.lastBM,isLastNote:n.isLast,painLevel:n.painLevel,phase:n.phase,painLoc:n.painLoc});
+        const blob=new Blob([html],{type:"text/html;charset=utf-8"});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement("a");
+        a.href=url;
+        const tag = n.timeIn ? "-"+n.timeIn.replace(":","") : "";
+        a.download=`Note-${(n.poc?.patient?.name||"patient").replace(/[\s,]+/g,"-")}-${n.dk.replace(/\//g,"-")}${tag}.html`;
+        a.style.display="none";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(()=>URL.revokeObjectURL(url),3000);
+      }, i*700);
     });
   };
 
-  // ── AUTOMATION BRIDGE ────────────────────────────────────────────────────────
-  // Stable programmatic API used by the Puppeteer worker. Human UI is unchanged.
+  // ── AUTOMATION BRIDGE ──────────────────────────────────────────────────────
+  // Stable programmatic API used by the Puppeteer worker. Human UI unchanged.
+  const noteToHTML = (n) => {
+    const html = buildNoteHTML({poc:n.poc, agencyName, snName, date:n.dk, timeIn:n.timeIn||"", timeOut:n.timeOut||"", vs:n.vs, topic:n.topic, intervention:n.intervention, lastBM:n.lastBM, isLastNote:n.isLast, painLevel:n.painLevel, phase:n.phase, painLoc:n.painLoc});
+    const tag = n.timeIn ? "-"+n.timeIn.replace(":","") : "";
+    const filename = `Note-${(n.poc?.patient?.name||"patient").replace(/[\s,]+/g,"-")}-${n.dk.replace(/\//g,"-")}${tag}.html`;
+    return { filename, html };
+  };
   useEffect(() => {
     window.__automation = {
-      version: 1,
-      ready: true,
+      version: 2, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setDates: (dateStrs) => {
@@ -567,15 +880,9 @@ export default function App() {
       extract: () => { extract485(); },
       generate: () => { generateAll(); },
       getState: () => ({
-        hasFile: !!file,
-        extracting, generating,
-        hasPoc: !!poc,
-        agency: agencyName,
-        nurse: snName,
-        dates: dates.map(fmtDate),
-        noteCount: notes.length,
-        status: genStatus,
-        error
+        hasFile: !!file, extracting, generating, hasPoc: !!poc,
+        agency: agencyName, nurse: snName, dates: dates.map(fmtDate),
+        noteCount: notes.length, status: genStatus, error
       }),
       getNotesHTML: () => notes.map(noteToHTML)
     };
@@ -644,11 +951,72 @@ export default function App() {
           <div style={{fontSize:11,fontWeight:800,color:"#2b6cb0",letterSpacing:1,textTransform:"uppercase",marginBottom:10,display:"flex",alignItems:"center"}}><SL/>Visit Details</div>
           <div style={{marginBottom:12}}><NameAutocomplete value={snName} onChange={setSnName}/></div>
 
-          {/* Calendar */}
-          <div style={{marginBottom:12,position:"relative",zIndex:30}}><CalendarPicker dates={dates} onChange={setDates}/></div>
+          {/* Options: BID / Auto AM-PM / Discharge */}
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14,background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:10,padding:"12px 14px"}}>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:12.5}}>
+              <input type="checkbox" checked={bidPatient} onChange={e=>setBidPatient(e.target.checked)} style={{width:16,height:16,accentColor:"#2b6cb0",cursor:"pointer"}}/>
+              <span><b>BID Patient</b> — document injection on each visit {poc?.injectable?.found && <span style={{fontSize:10,background:"#dcfce7",color:"#166534",padding:"1px 6px",borderRadius:8,fontWeight:600,marginLeft:4}}>💉 {poc.injectable.name} detected</span>}</span>
+            </label>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:12.5}}>
+              <input type="checkbox" checked={autoAMPM} onChange={e=>setAutoAMPM(e.target.checked)} style={{width:16,height:16,accentColor:"#2b6cb0",cursor:"pointer"}}/>
+              <span><b>Auto-create AM/PM</b> — 2 notes per calendar date (07:00 & 19:00)</span>
+            </label>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:12.5}}>
+              <input type="checkbox" checked={dischargeOn} onChange={e=>setDischargeOn(e.target.checked)} style={{width:16,height:16,accentColor:"#d97706",cursor:"pointer"}}/>
+              <span><b>Discharge</b> — make ONLY the last note a discharge note</span>
+            </label>
+          </div>
+
+          {/* Bulk date/time input */}
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#374151",marginBottom:4,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span>Bulk Visit Dates / Times</span>
+              {bulkEntries.length>0 && <span style={{fontSize:10,background:"#dbeafe",color:"#1e40af",padding:"1px 8px",borderRadius:10,fontWeight:600}}>{bulkEntries.length} visit{bulkEntries.length!==1?"s":""} parsed</span>}
+            </div>
+            <textarea value={bulkText} onChange={e=>{setBulkText(e.target.value);setBulkEntries(parseBulkInput(e.target.value));}}
+              placeholder={"Paste one visit per line, e.g.\n03/25/2026 11:00-11:45\n03/25/2026 19:00-19:45\n03/26/2026 11:00-11:45"}
+              rows={4}
+              style={{width:"100%",padding:"9px 12px",border:"1.5px solid #d1d5db",borderRadius:8,fontSize:12,fontFamily:"monospace",outline:"none",resize:"vertical",lineHeight:1.5}}/>
+            <div style={{fontSize:10,color:"#94a3b8",marginTop:3}}>One line = one note{bidPatient?" + one injection":""}. Same date twice = 2 separate notes. Leave empty to use the calendar below instead.</div>
+
+            {/* Bulk analysis panel */}
+            {bulkEntries.length>0 && (()=>{ 
+              const byDay = {};
+              bulkEntries.forEach(e=>{ const k=fmtDate(e.date); (byDay[k]=byDay[k]||[]).push(e); });
+              const days = Object.keys(byDay);
+              const twoPerDay = days.filter(d=>byDay[d].length===2).length;
+              const onePerDay = days.filter(d=>byDay[d].length===1).length;
+              const withTimes = bulkEntries.filter(e=>e.timeIn).length;
+              return (
+                <div style={{marginTop:8,background:"#eff6ff",border:"1.5px solid #bfdbfe",borderRadius:10,padding:"10px 14px",fontSize:11,color:"#1e40af"}}>
+                  <div style={{fontWeight:800,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>📊 Analysis</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 12px",lineHeight:1.6}}>
+                    <span>📋 Total notes: <b>{bulkEntries.length}</b></span>
+                    <span>📅 Unique days: <b>{days.length}</b></span>
+                    <span>🌗 2 visits/day: <b>{twoPerDay}</b></span>
+                    <span>☀️ 1 visit/day: <b>{onePerDay}</b></span>
+                    {bidPatient && poc?.injectable?.found && <span>💉 Injections: <b>{bulkEntries.length}</b></span>}
+                    <span>🕐 With times: <b>{withTimes}/{bulkEntries.length}</b></span>
+                  </div>
+                  <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #bfdbfe",fontSize:10.5}}>
+                    Range: <b>{fmtDate(bulkEntries[0].date)}</b> → <b>{fmtDate(bulkEntries[bulkEntries.length-1].date)}</b>
+                    {dischargeOn && <span> · 🏁 Last note (<b>{fmtDate(bulkEntries[bulkEntries.length-1].date)} {bulkEntries[bulkEntries.length-1].timeIn}</b>) = Discharge</span>}
+                  </div>
+                  {bidPatient && poc?.injectable?.found && (
+                    <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #bfdbfe",fontSize:10.5}}>
+                      💉 <b>{poc.injectable.name}</b> {poc.injectable.dose} {poc.injectable.route} — sites rotate{poc.leftArmRestricted?" (left arm avoided — mastectomy)":""}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Calendar (used only when bulk box is empty) */}
+          {bulkEntries.length===0 && <div style={{marginBottom:12,position:"relative",zIndex:30}}><CalendarPicker dates={dates} onChange={setDates}/></div>}
 
           {/* Per-date time pickers - sorted once, stable keys prevent lag */}
-          {dates.length>0&&<div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:4}}>
+          {bulkEntries.length===0 && !autoAMPM && dates.length>0&&<div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:4}}>
             {dates.map((date,idx)=>{
               const dk=fmtDate(date);
               const t=getTime(dk);
@@ -719,10 +1087,10 @@ export default function App() {
           {error&&<div data-testid="error-box" style={{padding:"10px 14px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,color:"#b91c1c",fontSize:12,marginBottom:10}}>{error}</div>}
 
           {/* Generate button */}
-          {poc&&dates.length>0&&(
+          {poc&&(dates.length>0||bulkEntries.length>0)&&(
             <button data-testid="generate-btn" onClick={generateAll} disabled={generating}
               style={{width:"100%",padding:13,background:generating?"#93c5fd":"#2b6cb0",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:generating?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:notes.length?10:0,boxShadow:"0 4px 12px rgba(43,108,176,0.25)"}}>
-              {generating?<><div style={{width:16,height:16,border:"2.5px solid rgba(255,255,255,0.3)",borderTopColor:"white",borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/>{genStatus}</>:`✨ Generate ${dates.length} Clinical Note${dates.length>1?"s":""}`}
+              {generating?<><div style={{width:16,height:16,border:"2.5px solid rgba(255,255,255,0.3)",borderTopColor:"white",borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/>{genStatus}</>:(()=>{ const n = bulkEntries.length>0 ? bulkEntries.length : (autoAMPM ? dates.length*2 : dates.length); return `✨ Generate ${n} Clinical Note${n>1?"s":""}${bidPatient&&poc?.injectable?.found?` + ${n} Injection${n>1?"s":""}`:""}`; })()}
             </button>
           )}
 
@@ -735,14 +1103,13 @@ export default function App() {
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
                 {notes.map((note,i)=>{
-                  const t=getTime(note.dk);
-                  const tIn=t.inH?fmtTime(t.inH,t.inM||0,t.inAP):"--:--";
-                  const tOut=t.outH?fmtTime(t.outH,t.outM||0,t.outAP):"--:--";
+                  const tIn = note.timeIn || "--:--";
+                  const tOut = note.timeOut || "--:--";
                   return (
-                    <div key={note.dk} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:note.isLast?"#fef3c7":"#f0fdf4",border:`1px solid ${note.isLast?"#fcd34d":"#86efac"}`,borderRadius:8,padding:"8px 12px"}}>
+                    <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:note.isLast?"#fef3c7":"#f0fdf4",border:`1px solid ${note.isLast?"#fcd34d":"#86efac"}`,borderRadius:8,padding:"8px 12px"}}>
                       <div>
                         <div style={{fontWeight:700,fontSize:12,color:note.isLast?"#92400e":"#166534"}}>{note.isLast?"🏁 ":"📝 "}{i+1}. {note.dk}</div>
-                        <div style={{fontSize:10,color:"#6b7280"}}>⏰ {tIn}–{tOut} · {note.topic}</div>
+                        <div style={{fontSize:10,color:"#6b7280"}}>⏰ {note.timeIn||"(no time)"}{note.timeIn&&note.timeOut?`–${note.timeOut}`:""} · {note.topic}{note.injSite?` · 💉 ${note.injSite}`:""}</div>
                       </div>
                       <button onClick={()=>downloadNote(note)} style={{background:note.isLast?"#d97706":"#166534",color:"white",border:"none",borderRadius:6,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>⬇️ #{i+1}</button>
                     </div>
