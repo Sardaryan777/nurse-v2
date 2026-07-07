@@ -41,13 +41,14 @@ async function waitForState(page, predicate, { timeout = 180000, interval = 1500
  * @param {Buffer} opts.pdfBuffer      the source 485 PDF
  * @param {string} opts.pdfFilename
  * @param {string} opts.agencyName
- * @param {string} opts.nurseName
+ * @param {string} opts.nurseName      default nurse (used when a date has no specific nurse)
  * @param {string[]} opts.dates        ["MM/DD/YYYY", ...]
  * @param {Object} opts.times          { "MM/DD/YYYY": {inH,inM,inAP,outH,outM,outAP} }
+ * @param {Object} [opts.nurses]       { "MM/DD/YYYY": "Nurse Name / LVN" } per-visit nurses
  * @returns {Promise<Array<{filename:string, buffer:Buffer}>>} generated PDFs
  */
 export async function runGenerator(opts) {
-  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, dates, times } = opts;
+  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, dates, times, nurses = {} } = opts;
 
   // Write PDF to a temp file so the native file input can accept it.
   const tmpPdf = path.join(os.tmpdir(), `poc-${Date.now()}.pdf`);
@@ -73,11 +74,12 @@ export async function runGenerator(opts) {
       window.__automation.setNurse(n);
     }, agencyName || "", nurseName || "");
 
-    // 3. Select all dates + fill times.
-    await page.evaluate((ds, tmap) => {
+    // 3. Select all dates + fill times + assign each visit its nurse.
+    await page.evaluate((ds, tmap, nmap) => {
       window.__automation.setDates(ds);
       window.__automation.setTimes(tmap);
-    }, dates, times);
+      if (window.__automation.setVisitNurses) window.__automation.setVisitNurses(nmap);
+    }, dates, times, nurses);
 
     // Give React a moment to commit state.
     await sleep(500);

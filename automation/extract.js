@@ -60,7 +60,9 @@ export async function extractAgencyName(pdfBuffer) {
   return (data.agencyName || "").trim();
 }
 
-// Extract nurse name + every visit (date, time in, time out) from the email body.
+// Extract every visit (date, time in, time out, nurse) from the email body.
+// Each visit line may carry its OWN nurse name; a nurse applies to all visits
+// only when the email names exactly one nurse.
 export async function extractVisitsFromEmail(bodyText) {
   const anthropic = client();
   const today = new Date();
@@ -70,22 +72,31 @@ export async function extractVisitsFromEmail(bodyText) {
     temperature: 0,
     system:
       "You parse scheduling emails for a home-health nursing service. " +
-      "Extract the nurse's name and every visit date with its time in and time out. " +
+      "Extract every visit date with its time in, time out, and the nurse assigned to that specific visit. " +
       `Assume the current year is ${today.getFullYear()} if a year is not stated. ` +
       "Normalize every date to MM/DD/YYYY. Normalize every time to 'HH:MM AM' or 'HH:MM PM' (12-hour, zero-padded hour). " +
+      "NURSE RULES: A visit line may include its own nurse name (before or after the date/times, or on a nearby grouping line like 'Nurse: NAME' followed by that nurse's dates). " +
+      "Assign each visit the nurse that the email associates with that specific date. " +
+      "If the email provides ONLY ONE nurse name total, apply it to every visit. " +
+      "If a visit has no identifiable nurse, use null for nurseName on that visit. " +
+      "Keep nurse names exactly as written, including titles like 'LVN' or 'RN' if attached (e.g. 'Gayane Maneyan / LVN'). " +
       "If only one time-in/time-out pair is given but multiple dates, apply that same pair to every date. " +
       "If a time is missing, use null for that field. " +
       'Return ONLY compact JSON of the exact form: ' +
-      '{"nurseName":"","visits":[{"date":"MM/DD/YYYY","timeIn":"HH:MM AM","timeOut":"HH:MM PM"}]} ' +
-      "with no markdown, no backticks, no commentary.",
+      '{"nurseName":"","visits":[{"date":"MM/DD/YYYY","timeIn":"HH:MM AM","timeOut":"HH:MM PM","nurseName":""}]} ' +
+      "where the top-level nurseName is the default/primary nurse (or the only one). " +
+      "No markdown, no backticks, no commentary.",
     messages: [{ role: "user", content: `Email body:\n\n${bodyText}` }]
   });
   const text = (resp.content || []).map(b => b.text || "").join("");
   const data = parseJSON(text);
-  return {
-    nurseName: (data.nurseName || "").trim(),
-    visits: Array.isArray(data.visits) ? data.visits : []
-  };
+  const visits = Array.isArray(data.visits) ? data.visits : [];
+  const defaultNurse = (data.nurseName || "").trim();
+  // Fill blanks with the default nurse so every visit ends up with a name when possible.
+  for (const v of visits) {
+    v.nurseName = (v.nurseName || "").trim() || defaultNurse;
+  }
+  return { nurseName: defaultNurse, visits };
 }
 
 // Convert "HH:MM AM" -> { h, m, ap } for the generator bridge. null-safe.

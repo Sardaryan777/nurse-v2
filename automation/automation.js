@@ -28,10 +28,12 @@ function log(...args) {
   console.log(`[${new Date().toISOString()}]`, ...args);
 }
 
-// Build the generator's date list + times map from extracted visits.
+// Build the generator's date list + times map + per-date nurse map from visits.
+// One visit entry = one date/time + one nurse name + one generated note.
 function buildScheduleInputs(visits) {
   const dates = [];
   const times = {};
+  const nurses = {};
   for (const v of visits) {
     if (!v.date) continue;
     const dk = v.date.trim();
@@ -42,9 +44,10 @@ function buildScheduleInputs(visits) {
       inH: tin.h, inM: tin.m, inAP: tin.ap,
       outH: tout.h, outM: tout.m, outAP: tout.ap
     };
+    if (v.nurseName) nurses[dk] = v.nurseName;
   }
-  // de-dup dates while keeping times
-  return { dates: [...new Set(dates)], times };
+  // de-dup dates while keeping times/nurses
+  return { dates: [...new Set(dates)], times, nurses };
 }
 
 async function processMessage(gmail, messageRef) {
@@ -62,15 +65,16 @@ async function processMessage(gmail, messageRef) {
   const agencyName = await extractAgencyName(msg.pdf.buffer);
   log(`  Agency: ${agencyName || "(none found)"}`);
 
-  // 4. Nurse + visits from the email body.
+  // 4. Nurses + visits from the email body (each visit may have its own nurse).
   const { nurseName, visits } = await extractVisitsFromEmail(msg.bodyText || "");
-  log(`  Nurse: ${nurseName || "(none)"} · Visits: ${visits.length}`);
+  const uniqueNurses = [...new Set(visits.map(v => v.nurseName).filter(Boolean))];
+  log(`  Default nurse: ${nurseName || "(none)"} · Visits: ${visits.length} · Nurses on schedule: ${uniqueNurses.join(", ") || "(none)"}`);
   if (!visits.length) {
     log("  No visit dates found in email body — skipping (leaving unread for manual review).");
     return;
   }
 
-  const { dates, times } = buildScheduleInputs(visits);
+  const { dates, times, nurses } = buildScheduleInputs(visits);
   log(`  Dates: ${dates.join(", ")}`);
 
   // 5. Drive the generator site -> PDFs.
@@ -81,13 +85,17 @@ async function processMessage(gmail, messageRef) {
     agencyName,
     nurseName,
     dates,
-    times
+    times,
+    nurses
   });
 
   // 6. Reply with all PDFs attached.
+  const nurseLabel = uniqueNurses.length > 1
+    ? `nurses ${uniqueNurses.join(", ")}`
+    : (uniqueNurses[0] || nurseName || "the nurse");
   const replyText =
     `Hello,\n\nAttached are the ${pdfs.length} generated clinical note${pdfs.length > 1 ? "s" : ""} ` +
-    `for ${nurseName || "the nurse"}${agencyName ? " (" + agencyName + ")" : ""}.\n\n` +
+    `for ${nurseLabel}${agencyName ? " (" + agencyName + ")" : ""}.\n\n` +
     `Visit dates: ${dates.join(", ")}\n\n` +
     `— Automated Clinical Note Generator`;
 
