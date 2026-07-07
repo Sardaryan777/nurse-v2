@@ -33,8 +33,9 @@ function pickVS() {
   const rr = line.match(/RR\s+(\d+)/);
   const bp = line.match(/BP Sitting\s+([\d/]+)/);
   // Random blood sugar 90-210 mg/dL for diabetic patients
-  const bs = Math.floor(90 + Math.random()*120);
-  return { temp: t?.[1]||"98.0", hr: hr?.[1]||"76", rr: rr?.[1]||"18", bp: bp?.[1]||"128/80", bs: String(bs) };
+  const bs = Math.floor(100 + Math.random()*80); // 100-180 mg/dL, away from report thresholds
+  const o2 = Math.floor(94 + Math.random()*5); // 94-98%
+  return { temp: t?.[1]||"98.0", hr: hr?.[1]||"76", rr: rr?.[1]||"18", bp: bp?.[1]||"128/80", bs: String(bs), o2: String(o2) };
 }
 function parseVL(line) { return pickVS(); } // compat
 function fmtDate(d) { if(!d)return""; return `${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}/${d.getFullYear()}`; }
@@ -90,14 +91,25 @@ Detect stage automatically:
 - If "Discharge" → stage = "DISCHARGE"
 
 Return this exact structure:
-{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"hasWheelchair":false,"hasWalker":true,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
+{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
 
 RULES:
 - stage: exactly "SOC", "RECERT", or "DISCHARGE"  
 - diagnoses: ["CODE - Description", ...]
-- medications: ["full medication string", ...]
+- medications: ["full medication string", ...] — copied VERBATIM from this document ONLY. NEVER invent, infer, or add typical/expected medications. If the document references an external med list (e.g. "See Meds 487") that is not attached, extract ONLY the medications visibly printed here and nothing more
 - teachingTopics: ordered list of 9 SHORT ALL-CAPS topic labels (2-5 words each). Derived from diagnoses, most acute first. For RECERT/DISCHARGE: last topic = "MEDICATION SAFETY & DISCHARGE PLANNING". Examples: "ACUTE RESPIRATORY FAILURE", "HOME SAFETY & FALL PRECAUTIONS", "ANXIETY & LORAZEPAM MEDICATION", "BENIGN PROSTATIC HYPERPLASIA", "BIPOLAR DISORDER", "DEPRESSION & CITALOPRAM MEDICATION", "DIFFICULTY IN WALKING", "HYPERLIPIDEMIA & ROSUVASTATIN", "PAIN MANAGEMENT & TYLENOL"
 - hasPleurX: true if PleurX catheter mentioned in document\n- hasParalysis: true ONLY if paralysis, paraplegia, hemiplegia, or quadriplegia is explicitly diagnosed. Default false — do NOT assume paralysis from weakness or difficulty walking\n- hasCaregiver: true if PCG, caregiver, family member, or caregiver involvement is documented in the POC. Default false
+- isBedbound: true if Complete Bedrest, bedbound, or bedrest is marked in Activities Permitted or functional limitations
+- hasWound: true if pressure ulcer, wound, decubitus, or wound care orders present. woundDesc: brief location description (e.g. "coccyx and right hip pressure ulcers"). woundStage: stage if stated (e.g. "1")
+- hasContracture: true if contracture diagnosis or functional limitation listed
+- hasDysphagia: true if dysphagia diagnosed. proneToAspiration: true if dysphagia or aspiration risk documented
+- lungSounds: "clear" unless 485 documents wheezes/crackles/diminished (then use that word, e.g. "anterior wheezes")
+- hasTremor: true if tremor diagnosis (essential tremor, Parkinson's) in diagnosis list\n- hasVertigo: true if vertigo or dizziness disorder diagnosed (e.g. H81.x peripheral vertigo)
+- hasPVD: true if peripheral vascular/arterial disease diagnosed
+- hasWalker/hasCane/hasWheelchair: true ONLY if that device is in DME/supplies or activities permitted. Do NOT default to true
+- homeboundFlags: read the 485's homebound statement and set each flag from it: limitedEndurance, limitedStrength, assistADL (needs assistance for activities), unevenSurfaces, confusion (only if confusion listed as homebound reason), unableToLeaveAlone, poorCoordination, taxingEffort
+- mentalStatus: set each flag true ONLY if documented in Mental Status section (item 19) or medical summary. depressedControlled=true ONLY if depression documented AND a psychiatric medication exists in med list
+- deficits: set each flag true ONLY if that finding is explicitly documented in this 485/POC (functional limitations, medical summary, diagnoses, item 99). Do NOT assume or default any deficit to true. Examples: poorVision only if impaired/blurred vision documented; hoh only if HOH/hearing impairment; sob only if SOB/dyspnea; urinaryIncontinence/bowelIncontinence only if incontinence documented; edema only if edema documented; stiffJoints/weakness/limitedROM/unsteadyBalance only if documented
 - isDiabetic: true if diabetes, insulin, blood sugar monitoring, or diabetic care mentioned
 - leftArmRestricted: true if left mastectomy, left-arm restriction, or "no BP/blood draw left arm" mentioned
 - injectable: scan medications AND nursing orders for any INJECTABLE medication (insulin, Lantus, Solostar, Humalog, Novolog, enoxaparin, Lovenox, B12, etc). If found, set found=true and extract: name (e.g. "Lantus Solostar Insulin"), dose (e.g. "30 units"), route ("subcutaneous"), frequency ("twice daily" or "once daily"), instruction (brief admin note). If no injectable, found=false.`;
@@ -110,7 +122,7 @@ STRICT DATA RULE: Only mention diagnoses, medications, treatments, and findings 
 VISIT CONTEXT:
 - Teaching topic: {TOPIC}
 - Visit phase: {PHASE}
-- Pain level: {PAIN}/10  |  Pain location: {PAINLOC}
+- Pain level: {PAIN}/10  |  Pain location: {PAINLOC}  |  Pain character: {PAINCHAR}
 - Pain medication available: {PAINMED}
 - Subject: {SUBJECT}  (write for this subject — "patient" or "patient/caregiver")
 - Note #{NUM} of {TOTAL}
@@ -118,6 +130,7 @@ VISIT CONTEXT:
 - Medications (ONLY these): {MEDS}
 - Visit-specific observations to include: {OBS}
 - Respiratory medication present: {HAS_RESP}
+- Mobility status: {MOBILITY}  (if BEDBOUND: NEVER write that patient stood, walked, ambulated, or used a walker/cane — patient is on complete bedrest; pain wording must use "increased with repositioning and turning" instead of standing/ambulation)
 {INJECTION_INFO}
 
 Write the INTERVENTION as 4 short blocks (concise, clinical):
@@ -126,8 +139,8 @@ BLOCK 1 — LVN visit actions (3-4 sentences):
 "{SUBJECT_CAP} was contacted prior to visit. LVN completed skilled observation and focused assessment/data collection per plan of care. Vital signs obtained and recorded. Lung and heart sounds monitored. Pain level reviewed. Medication compliance, diet adherence, homebound status, and safety measures were reviewed. Hand washing performed before and after patient care."
 
 BLOCK 2 — Pain + visit observations (3-4 sentences):
-State pain: "Patient reports dull {PAINLOC} pain rated {PAIN}/10" + phase wording:
-- EARLY (5): "increased with prolonged standing and ambulation, relieved partially by rest, repositioning, and {PAINMED_PHRASE}."
+State pain: "Patient reports {PAINCHAR} {PAINLOC} pain rated {PAIN}/10" + phase wording:
+- EARLY (5): if AMBULATORY: "increased with prolonged standing and ambulation, relieved partially by rest, repositioning, and {PAINMED_PHRASE}." — if BEDBOUND: "increased with repositioning and turning, relieved partially by pressure relief positioning, gentle handling, and {PAINMED_PHRASE}."
 - MIDDLE (3-4): "improved compared with prior visit; better controlled with rest, repositioning, gentle movement, and {PAINMED_PHRASE}."
 - LATE/DISCHARGE (2): "pain is controlled with current measures; no new acute pain complaints reported this visit."
 Then weave in the visit-specific observations naturally.
@@ -182,9 +195,26 @@ const SKILLED_OBS = [
   "Lung sounds clear bilaterally; respirations even and unlabored at rest.",
   "Patient tolerated visit without acute distress."
 ];
-function getObsForVisit(index, count=3) {
+const SKILLED_OBS_BEDBOUND = [
+  "Patient repositioned with caregiver assistance; skin over bony prominences inspected.",
+  "Caregiver demonstrated proper repositioning technique with verbal cueing from SN.",
+  "Patient denied chest pain or dizziness at rest; respirations even and unlabored.",
+  "Wound site inspected; dressing dry and intact prior to care.",
+  "Passive range of motion status observed; contractures noted without acute change.",
+  "Patient demonstrated improved medication recall with caregiver assistance.",
+  "Patient required reinforcement of instructions due to forgetfulness.",
+  "No new areas of skin breakdown observed beyond documented wound sites.",
+  "Appetite fair; caregiver encouraged to maintain prescribed diet with upright positioning during meals.",
+  "Head of bed elevated during and after meals due to dysphagia risk.",
+  "Patient remained on bedrest per plan of care; pressure-relief schedule reviewed with caregiver.",
+  "Patient alert and oriented with forgetfulness and intermittent confusion noted.",
+  "Incontinence care reviewed; perineal skin observed intact aside from documented wounds.",
+  "Patient tolerated visit without acute distress."
+];
+function getObsForVisit(index, count=3, isBedbound=false) {
+  const bank = isBedbound ? SKILLED_OBS_BEDBOUND : SKILLED_OBS;
   const out = [];
-  for (let i = 0; i < count; i++) out.push(SKILLED_OBS[(index*3 + i) % SKILLED_OBS.length]);
+  for (let i = 0; i < count; i++) out.push(bank[(index*3 + i) % bank.length]);
   return out;
 }
 
@@ -206,24 +236,51 @@ function hasRespiratoryMed(meds=[]) {
 }
 function findPainMed(meds=[]) {
   const s=meds.map(m=>String(m).toLowerCase());
-  if(s.some(m=>m.includes("tylenol")||m.includes("acetaminophen"))) return "Tylenol";
+  // Opioid combos first — name the actual ordered drug, not just the acetaminophen component
+  if(s.some(m=>m.includes("hydrocodone"))) return "Hydrocodone-Acetaminophen";
+  if(s.some(m=>m.includes("oxycodone")&&m.includes("acetaminophen"))) return "Oxycodone-Acetaminophen";
+  if(s.some(m=>m.includes("oxycodone"))) return "Oxycodone";
+  if(s.some(m=>m.includes("norco"))) return "Norco";
+  if(s.some(m=>m.includes("tramadol"))) return "Tramadol";
   if(s.some(m=>m.includes("meloxicam"))) return "Meloxicam";
   if(s.some(m=>m.includes("ibuprofen")||m.includes("advil"))) return "Ibuprofen";
   if(s.some(m=>m.includes("gabapentin"))) return "Gabapentin";
-  if(s.some(m=>m.includes("tramadol"))) return "Tramadol";
+  if(s.some(m=>m.includes("tylenol")||m.includes("acetaminophen"))) return "Tylenol";
   return null;
 }
 // Pain location consistent with teaching topic + diagnoses
 function getPainLocation(topic, diagnoses) {
-  const t=String(topic||"").toLowerCase();
-  const dx=(diagnoses||[]).join(" ").toLowerCase();
-  const hasBack = t.includes("back")||t.includes("lumbar")||t.includes("dorsalgia")||dx.includes("back")||dx.includes("dorsalgia");
-  const hasKnee = t.includes("knee")||dx.includes("knee");
+  const t=stripNegated(topic);
+  const dx=stripNegated((diagnoses||[]).join(" "));
+  const all = t + " " + dx;
+  // Sciatica / radiculopathy with leg pain — side-specific
+  const rightSide = all.includes("right side")||all.includes("right lower leg")||all.includes("right leg")||all.includes("sciatica, right");
+  const leftSide = all.includes("left side")||all.includes("left lower leg")||all.includes("left leg")||all.includes("sciatica, left");
+  const hasSciatica = all.includes("sciatica")||all.includes("radiculopathy");
+  const hasBack = all.includes("back")||all.includes("lumbar")||all.includes("dorsalgia");
+  const hasKnee = all.includes("knee");
+  if(hasSciatica && rightSide) return "right lower back and right leg";
+  if(hasSciatica && leftSide) return "left lower back and left leg";
+  if(hasSciatica) return "lower back radiating to leg";
   if(hasBack && hasKnee) return "lower back and knee";
-  if(t.includes("left knee")||dx.includes("left knee")) return "left knee";
-  if(hasKnee||dx.includes("osteoarthritis")) return "knee";
+  if(all.includes("left knee")) return "left knee";
+  if(all.includes("right knee")) return "right knee";
+  if(hasKnee||all.includes("osteoarthritis")) return "knee";
   if(hasBack) return "lower back";
   return "lower back";
+}
+// Pain character from diagnoses: sciatica/radiculopathy → radiating; else dull
+// Strip negated findings ("without X", "w/o X") so they never match as positive
+function stripNegated(text) {
+  return String(text||"").toLowerCase()
+    .replace(/without\s+(myelopathy\s+or\s+)?[a-z]+/g, " ")
+    .replace(/w\/o\s+(myelopathy\s+or\s+)?[a-z]+/g, " ")
+    .replace(/no\s+evidence\s+of\s+[a-z]+/g, " ");
+}
+function getPainCharacter(diagnoses) {
+  const dx=stripNegated((diagnoses||[]).join(" "));
+  if(dx.includes("sciatica")||dx.includes("radiculopathy")) return "radiating";
+  return "dull";
 }
 // Remove unresolved placeholders and RN-level wording from AI text
 function cleanNoteText(text) {
@@ -375,6 +432,9 @@ function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topi
   const cbFont = "'Segoe UI Symbol','DejaVu Sans','Arial Unicode MS',sans-serif";
   const bh = v => `<span style="font-family:${cbFont};font-size:8.4pt;line-height:0">${v ? "&#9746;" : "&#9744;"}</span>`;
   const ms = poc.mentalStatus||{};
+  const df = poc.deficits||{};
+  const hbf = poc.homeboundFlags||{limitedEndurance:true,limitedStrength:true,assistADL:true,unevenSurfaces:true,confusion:false,unableToLeaveAlone:true,poorCoordination:false,taxingEffort:true};
+  const painChar = getPainCharacter(poc.diagnoses);
   // Pain medication driven ONLY by 485/POC medication list
   const _painMed = findPainMed(poc.medications);
   const painMedText = _painMed==="Tylenol" ? "Tylenol / Acetaminophen as ordered"
@@ -504,7 +564,6 @@ html,body{
 </head>
 <body>
 <div class="wrap">
-<div style="font-size:8.4pt;font-weight:900;margin-bottom:1px">0</div>
 <div class="hdr"><h1>${agencyName}</h1><h2>CLINICAL NOTE</h2></div>
 
 <div class="cols">
@@ -513,58 +572,58 @@ html,body{
 <div class="sec"><div class="st">DEFICITS:</div>
 <b>MENTAL: </b>${bh(ms.oriented!==false)}Oriented ${bh(ms.alert!==false)}Alert<br>
 ${bh(ms.disoriented||false)}Disoriented<br>
-${bh(ms.forgetful!==false)}Forgetful ${bh(ms.confusedAtTimes!==false)} Confused at times &nbsp;${bh(ms.anxious!==false)} Anxious at times<br>
-${bh(ms.depressedControlled!==false)} Depressed at times( controlled with medications)<br>
+${bh(ms.forgetful||false)}Forgetful ${bh(ms.confusedAtTimes||false)} Confused at times &nbsp;${bh(ms.anxious||false)} Anxious at times<br>
+${bh(ms.depressedControlled||false)} Depressed at times( controlled with medications)<br>
 ${bh(ms.agitated||false)}Agitated</div>
 
 <div class="sec"><div class="st">INTEGUMENTARY:</div>
-${bh(false)}Wound ${bh(false)}Decub Stage${bh(false)}1${bh(false)}2${bh(false)}3${bh(false)}4<br>
+${bh(poc.hasWound||false)}Wound ${bh(poc.hasWound||false)}Decub Stage${bh(poc.woundStage==="1")}1${bh(poc.woundStage==="2")}2${bh(poc.woundStage==="3")}3${bh(poc.woundStage==="4")}4 ${poc.hasWound&&poc.woundDesc?`<u>${poc.woundDesc}</u>`:""}<br>
 ${bh(false)}Infected ${bh(false)} Foul odor drainage<br>
 ${bh(false)}Rashes ${bh(false)}Sizes<span style="border-bottom:1px solid #000;display:inline-block;width:30px"></span><br>
 ${bh(hp)}Tubes ${hp?'<span style="border-bottom:1px solid #000;display:inline-block;width:50px;font-size:8.4pt">left chest rib</span>':''}<span style="border-bottom:1px solid #000;display:inline-block;width:${hp?'5':'30'}px"></span> ${bh(hp)}${hp?'Shunt pleural catheter':'Shunt'}<br>
 Other:</div>
 
-<div class="sec"><b>EENT: </b>${bh(true)} poor vision ${bh(false)}Legally blind &nbsp;${bh(false)}Epistaxis<br>
-${bh(false)}Dysphagia ${bh(false)}Deaf ${bh(true)} HOH R/L<br>
-${bh(false)}Prone to aspiration</div>
+<div class="sec"><b>EENT: </b>${bh(df.poorVision||false)} poor vision ${bh(df.legallyBlind||false)}Legally blind &nbsp;${bh(false)}Epistaxis<br>
+${bh(poc.hasDysphagia||false)}Dysphagia ${bh(df.deaf||false)}Deaf ${bh(df.hoh||false)} HOH R/L<br>
+${bh(poc.proneToAspiration||false)}Prone to aspiration</div>
 
 <div class="sec"><div class="st">RESPIRATORY: </div>
-${bh(true)}SOB ${bh(false)}Rest${bh(true)}min. exer ${bh(false)}<br>
+${bh(df.sob||false)}SOB ${bh(false)}Rest${bh(df.sob||false)}min. exer ${bh(false)}<br>
 mod. exertion ${bh(false)}Cough ${bh(false)}Productive ${bh(false)}Non-productive ${bh(false)} Sputum Color:<span style="border-bottom:1px solid #000;display:inline-block;width:16px"></span> ${bh(false)}Amount<br>
-Lung Sound: <span style="border-bottom:1px solid #000;display:inline-block;width:35px;font-size:8.4pt">${isSOC?"":"clear"}</span><br>
-O2sat <u>${poc.o2Sat||"96"}%</u> LPM &nbsp;Other ${isSOC?'<span style="font-size:8.4pt;text-decoration:underline">Acute Respiratory failure with hypoxia</span>':''}</div>
+Lung Sound: <u>${poc.lungSounds||"clear"}</u><br>
+O2sat <u>${poc.o2Sat||vs.o2||"96"}%</u> LPM &nbsp;Other</div>
 
 <div class="sec"><div class="st">MUSCULOSKELETAL: </div>
-${bh(true)}Stiff joints ${bh(true)}Weakness ${bh(true)}Limited ROM<br>
-${bh(poc.hasCane||false)}cane ${bh(poc.hasWalker!==false)}walker ${bh(poc.hasWheelchair||false)}W/C ${bh(false)}Contractures ${bh(false)} Foot drop${bh(true)}Unsteady balance ${bh(false)}Other</div>
+${bh(df.stiffJoints||false)}Stiff joints ${bh(df.weakness||false)}Weakness ${bh(df.limitedROM||false)}Limited ROM<br>
+${bh(poc.hasCane||false)}cane ${bh(poc.hasWalker===true)}walker ${bh(poc.hasWheelchair||false)}W/C ${bh(poc.hasContracture||false)}Contractures ${bh(false)} Foot drop${bh(df.unsteadyBalance===true&&!poc.isBedbound)}Unsteady balance ${bh(false)}Other</div>
 
 <div class="sec"><b>PAIN: </b>${bh(false)}No ${bh(true)} Yes Location: <u>${painLoc}</u><br>
 Intensity: ${[1,2,3,4,5,6,7,8,9,10].map(n=>n===painLevel?`<u><b>${n}</b></u>`:n).join(" ")} &nbsp;<b>(${painLevel}/10)</b><br>
-${bh(false)}Sharp ${bh(true)} Dull ${bh(false)}Radiating ${bh(false)}Burning<br>
+${bh(false)}Sharp ${bh(painChar==="dull")} Dull ${bh(painChar==="radiating")}Radiating ${bh(false)}Burning<br>
 Controlled ${bh(false)}No ${bh(true)} Yes by: ${painControlLine}</div>
 
 <div class="sec"><div class="st">GASTROINTESTINAL:</div>
 ${bh(false)}Nausea ${bh(false)}Vomiting ${bh(false)}Diarrhea<br>
 ${bh(false)}Constipation ${bh(false)}Impaction ${bh(false)}Abd. Dist.<br>
-${bh(true)}Incontinent ${bh(false)}Last BM: <u>${lastBM||""}</u><br>
+${bh(df.bowelIncontinence||false)}Incontinent ${bh(false)}Last BM: <u>${lastBM||""}</u><br>
 Appetite ${bh(false)}Good ${bh(true)}Fair ${bh(false)}Poor<br>
 Diet: <u>${poc.diet||"low fat, low cholesterol"}</u></div>
 
 <div class="sec"><div class="st">NEUROLOGICAL:</div>
 ${bh(false)}Aphasic ${bh(false)}Slurred speech ${bh(false)}Seizures<br>
-${bh(false)}Headache ${bh(false)}Tremors ${bh(false)}Vertigo<br>
+${bh(false)}Headache ${bh(poc.hasTremor||false)}Tremors ${bh(poc.hasVertigo||false)}Vertigo<br>
 ${bh(false)}Grips unequal ${bh(false)}Pupils unequal<br>
 ${bh(true)}PERRLA ${bh(false)}Weakness R${bh(false)} L${bh(false)}</div>
 
 <div class="sec"><div class="st">CARDIOVASCULAR:</div>
 ${bh(false)}Chest pain ${bh(false)}Palpitations ${bh(false)}Dizziness<br>
-Pedal pulses: ${bh(true)}Present ${bh(false)}Absent<br>
-Edema: ${bh(false)}Pitting ${bh(true)}Non-pitting ${bh(false)} Pacer.<br>
+Pedal pulses: ${bh(!poc.hasPVD)}Present ${bh(false)}Absent<br>
+Edema: ${bh(false)}Pitting ${bh(df.edema||false)}Non-pitting ${bh(false)} Pacer.<br>
 ${bh(false)}1+ ${bh(false)}2+ ${bh(false)}3+ ${bh(false)}4+ ${bh(false)} Dependent<br>
-Location: ${bh(true)}BLE${bh(true)}Dorsum R/L</div>
+Location: ${bh(df.edema||false)}BLE${bh(false)}Dorsum R/L</div>
 
 <div class="sec"><div class="st">GENITOURINARY:</div>
-${bh(true)}Incontinent ${bh(true)}Frequency ${bh(true)}Urgency<br>
+${bh(df.urinaryIncontinence||false)}Incontinent ${bh(df.urinaryFrequency||false)}Frequency ${bh(df.urinaryUrgency||false)}Urgency<br>
 ${bh(false)}Pain ${bh(false)}Nocturia${bh(false)}Burning${bh(false)}Retention<br>
 ${bh(false)}Catheter ${bh(false)}Condom ${bh(false)}IFC${bh(false)}Suprapub<br>
 ${bh(false)}Foul odor ${bh(true)} clear yellow ${bh(false)} Cloudy<br>
@@ -572,7 +631,7 @@ ${bh(true)} No foul odor reported ${bh(false)}Hematuria</div>
 
 <div class="sec"><div class="st">ENDOCRINE:</div>
 ${bh(false)}Weak ${bh(false)}Diaphoretic ${bh(false)}Polyuria<br>
-${bh(false)}polydipsia${bh(false)}Blurred vision ${bh(false)}diabetic foot exam.<br>
+${bh(false)}polydipsia${bh(false)}Blurred vision ${bh(poc.isDiabetic||false)}diabetic foot exam.<br>
 ${bh(false)}sweats ${bh(false)}polyphagia &nbsp; ${bh(false)}Tremors ${bh(false)}Other:</div>
 
 <div class="sec"><div class="st">IDENTIFICATION:</div>
@@ -590,13 +649,13 @@ BP: <b>R / L</b> Lying <span style="border-bottom:1px solid #000;display:inline-
 </div>
 
 <div class="sec">
-<b>HOMEBOUND STATUS: </b>${bh(true)}Poor/Limited Endurance ${bh(true)} Poor/Limited Strength<br>
-${bh(true)} SOBOE ${bh(true)}Poor Unsteady Gait ${bh(true)}Requires Assist with ADL<br>
-${bh(true)} Unable to Negotiate Uneven Surfaces or Steps ${bh(false)} Medical Restrictions<br>
-${bh(false)}Non-wt bearing &nbsp;${bh(true)}Requires assist with transfer ${bh(true)}Requires assistive device to ambulate ${bh(true)} Confusion${bh(true)}<br>
-Unable to leave home without assistance ${bh(false)}Bedbound<br>
-${bh(poc.hasParalysis||false)}Paralysis UE / LE / both ${bh(true)}Requires assist to ambulate ${bh(true)}Poor coordination or balance ${bh(false)}Partial wt bearing<br>
-${bh(true)} Others: requires considerable and taxing efforts to leave home even with assistance from caregiver.
+<b>HOMEBOUND STATUS: </b>${bh(hbf.limitedEndurance!==false)}Poor/Limited Endurance ${bh(hbf.limitedStrength!==false)} Poor/Limited Strength<br>
+${bh(df.sob||false)} SOBOE ${bh(!poc.isBedbound)}Poor Unsteady Gait ${bh(hbf.assistADL!==false)}Requires Assist with ADL<br>
+${bh(hbf.unevenSurfaces!==false)} Unable to Negotiate Uneven Surfaces or Steps ${bh(false)} Medical Restrictions<br>
+${bh(poc.isBedbound||false)}Non-wt bearing &nbsp;${bh(true)}Requires assist with transfer ${bh(!poc.isBedbound)}Requires assistive device to ambulate ${bh(hbf.confusion||ms.confusedAtTimes||false)} Confusion${bh(hbf.unableToLeaveAlone!==false)}<br>
+Unable to leave home without assistance ${bh(poc.isBedbound||false)}Bedbound<br>
+${bh(poc.hasParalysis||false)}Paralysis UE / LE / both ${bh(!poc.isBedbound)}Requires assist to ambulate ${bh(hbf.poorCoordination||df.unsteadyBalance||false)}Poor coordination or balance ${bh(false)}Partial wt bearing<br>
+${bh(hbf.taxingEffort!==false)} Others: requires considerable and taxing efforts to leave home even with assistance from caregiver.
 </div>
 
 <div class="sec"><b>ASSESSMENTS:</b> (Problems/Significant Findings) Teaching done regarding <b>${phase==="FINAL_DISCHARGE"?"DISCHARGE FROM SKILLED NURSING SERVICES":topic}</b></div>
@@ -746,7 +805,7 @@ export default function App() {
         const isLast = dischargeOn && (i === visits.length-1);
         const phase = getVisitPhase(i, total, dischargeOn, isLast);
         const painLevel = getPainLevelByVisit(i, total);
-        const obs = getObsForVisit(i, 3);
+        const obs = getObsForVisit(i, 3, poc.isBedbound||false);
         const topic = isLast ? "MEDICATION SAFETY & DISCHARGE PLANNING"
                     : (phase==="PRE_DISCHARGE" ? "DISCHARGE PLANNING & READINESS REVIEW"
                     : (topics[i%topics.length]||"DISEASE PROCESS & MANAGEMENT"));
@@ -762,11 +821,13 @@ export default function App() {
         const hasResp = hasRespiratoryMed(poc.medications) ? "YES" : "NO";
 
         // Injection details for this visit
-        let injInfo = "", injSentence = "", injSite = "";
+        let injInfo = "", injSentence = "", injSite = "", injText = "";
         if (useInjection) {
           injSite = getInjSite(i, poc.leftArmRestricted);
-          injInfo = `Injectable medication: ${inj.name} ${inj.dose} ${inj.route}, ${inj.frequency}. This visit's injection site: ${injSite}.`;
-          injSentence = `AFTER the opening, add this injection documentation sentence: "SN administered ${inj.name} ${inj.dose} ${inj.route} at ${injSite} as ordered. Injection site assessed before and after administration; no adverse reaction, redness, or skin breakdown noted. Aseptic technique and proper sharps disposal observed." ${poc.isDiabetic?'Also note: "Blood sugar level checked via glucometer and recorded; diabetic foot exam performed."':''}`;
+          // Deterministic injection documentation — matched to 485 order style (guaranteed in every note)
+          injText = `SN prepared and administered ${inj.name} ${inj.dose} ${inj.route} at ${injSite} as ordered by MD, using aseptic technique with proper rotation of injection sites and proper disposal of sharps and contaminated materials. Injection site assessed before and after administration; no redness, swelling, bruising, skin breakdown, or adverse reaction noted.${poc.isDiabetic?" Blood sugar level monitored using patient's glucometer with aseptic technique, proper rotation of puncture sites, and proper sharps disposal; result recorded. Diabetic foot exam and care performed this visit.":""}`;
+          injInfo = `Injectable medication: ${inj.name} ${inj.dose} ${inj.route}, ${inj.frequency}. This visit's injection site: ${injSite}. NOTE: The injection documentation is inserted automatically — do NOT write your own injection sentence.`;
+          injSentence = "";
         }
 
         const prevNote = prevTopics.length>0 ? ` Previously covered: ${prevTopics.slice(-3).join(", ")}. Use different phrasing.` : "";
@@ -774,11 +835,13 @@ export default function App() {
           .replace(/\{PHASE\}/g,phase)
           .replace(/\{PAIN\}/g,painLevel)
           .replace(/\{PAINLOC\}/g,painLoc)
+          .replace(/\{PAINCHAR\}/g,getPainCharacter(poc.diagnoses))
           .replace(/\{PAINMED\}/g,painMed||"none")
           .replace(/\{PAINMED_PHRASE\}/g,painMedPhrase)
           .replace(/\{SUBJECT_CAP\}/g,subjectCap)
           .replace(/\{SUBJECT\}/g,subject)
           .replace(/\{HAS_RESP\}/g,hasResp)
+          .replace(/\{MOBILITY\}/g,poc.isBedbound?"BEDBOUND":"AMBULATORY")
           .replace("{TOPIC}",topic)
           .replace("{DIAGNOSES}",diagStr)
           .replace("{NUM}",i+1).replace("{TOTAL}",total)
@@ -789,6 +852,20 @@ export default function App() {
 
         let intervention = await callAPI([{role:"user",content:prompt}],"",1100);
         intervention = cleanNoteText(intervention);
+        // GUARANTEED injection documentation: insert after the opening block in every BID note
+        if (useInjection && injText) {
+          // Remove any AI-written injection sentence to avoid duplication
+          intervention = intervention.replace(/SN (prepared and )?administered[^.]*\.(\s*Injection site[^.]*\.)?/gi, "").replace(/\s{2,}/g," ").trim();
+          // Insert after first block (after "patient care." opening) or prepend if not found
+          const anchor = "patient care.";
+          const pos = intervention.indexOf(anchor);
+          if (pos !== -1) {
+            const insertAt = pos + anchor.length;
+            intervention = intervention.slice(0, insertAt) + " " + injText + " " + intervention.slice(insertAt).trim();
+          } else {
+            intervention = injText + " " + intervention;
+          }
+        }
         // Safety net: remove ongoing-care contradictions from final discharge notes
         if (phase === "FINAL_DISCHARGE") {
           intervention = intervention
@@ -804,7 +881,10 @@ export default function App() {
 
         const vs = pickVS();
         setPreviewVS(vs);
-        const bmDate = new Date(date); bmDate.setDate(bmDate.getDate()-1);
+        // Constipation patients: BM 2-3 days back (daily BM contradicts K59.04); others: 1 day
+        const hasConstipation = (poc.diagnoses||[]).join(" ").toLowerCase().includes("constipation");
+        const bmDaysBack = hasConstipation ? (2 + (i % 2)) : 1;
+        const bmDate = new Date(date); bmDate.setDate(bmDate.getDate()-bmDaysBack);
         generated.push({
           date, dk, topic, intervention:intervention.trim(), vs, isLast,
           lastBM:fmtDateDot(bmDate), poc,
@@ -866,7 +946,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 2, ready: true,
+      version: 3, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setDates: (dateStrs) => {
