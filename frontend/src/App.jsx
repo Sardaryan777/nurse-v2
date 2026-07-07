@@ -656,6 +656,7 @@ export default function App() {
   const [snName,     setSnName]     = useState("");
   const [dates,      setDates]      = useState([]);
   const [dateTimes,  setDateTimes]  = useState({});
+  const [dateNurses, setDateNurses] = useState({}); // { "MM/DD/YYYY": "Nurse Name / LVN" } per-visit nurse override
   const [previewVS,  setPreviewVS]  = useState(()=>pickVS());
   const [bidPatient, setBidPatient] = useState(false);
   const [autoAMPM,   setAutoAMPM]   = useState(false);
@@ -808,7 +809,9 @@ export default function App() {
           date, dk, topic, intervention:intervention.trim(), vs, isLast,
           lastBM:fmtDateDot(bmDate), poc,
           timeIn:v.timeIn, timeOut:v.timeOut, injSite,
-          painLevel, phase, painLoc
+          painLevel, phase, painLoc,
+          // Each visit keeps its own nurse; falls back to the global SN name.
+          nurseName: dateNurses[dk] || ""
         });
         prevTopics.push(topic);
       }
@@ -821,7 +824,7 @@ export default function App() {
 
     // ── Download ───────────────────────────────────────────────────────────────
   const downloadNote = (note) => {
-    const html = buildNoteHTML({poc:note.poc, agencyName, snName, date:note.dk, timeIn:note.timeIn||"", timeOut:note.timeOut||"", vs:note.vs, topic:note.topic, intervention:note.intervention, lastBM:note.lastBM, isLastNote:note.isLast, painLevel:note.painLevel, phase:note.phase, painLoc:note.painLoc});
+    const html = buildNoteHTML({poc:note.poc, agencyName, snName:note.nurseName||snName, date:note.dk, timeIn:note.timeIn||"", timeOut:note.timeOut||"", vs:note.vs, topic:note.topic, intervention:note.intervention, lastBM:note.lastBM, isLastNote:note.isLast, painLevel:note.painLevel, phase:note.phase, painLoc:note.painLoc});
     const blob = new Blob([html],{type:"text/html;charset=utf-8"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -837,7 +840,7 @@ export default function App() {
     if(notes.length===0)return;
     notes.forEach((n,i)=>{
       setTimeout(()=>{
-        const html=buildNoteHTML({poc:n.poc,agencyName,snName,date:n.dk,timeIn:n.timeIn||"",timeOut:n.timeOut||"",vs:n.vs,topic:n.topic,intervention:n.intervention,lastBM:n.lastBM,isLastNote:n.isLast,painLevel:n.painLevel,phase:n.phase,painLoc:n.painLoc});
+        const html=buildNoteHTML({poc:n.poc,agencyName,snName:n.nurseName||snName,date:n.dk,timeIn:n.timeIn||"",timeOut:n.timeOut||"",vs:n.vs,topic:n.topic,intervention:n.intervention,lastBM:n.lastBM,isLastNote:n.isLast,painLevel:n.painLevel,phase:n.phase,painLoc:n.painLoc});
         const blob=new Blob([html],{type:"text/html;charset=utf-8"});
         const url=URL.createObjectURL(blob);
         const a=document.createElement("a");
@@ -856,7 +859,7 @@ export default function App() {
   // ── AUTOMATION BRIDGE ──────────────────────────────────────────────────────
   // Stable programmatic API used by the Puppeteer worker. Human UI unchanged.
   const noteToHTML = (n) => {
-    const html = buildNoteHTML({poc:n.poc, agencyName, snName, date:n.dk, timeIn:n.timeIn||"", timeOut:n.timeOut||"", vs:n.vs, topic:n.topic, intervention:n.intervention, lastBM:n.lastBM, isLastNote:n.isLast, painLevel:n.painLevel, phase:n.phase, painLoc:n.painLoc});
+    const html = buildNoteHTML({poc:n.poc, agencyName, snName:n.nurseName||snName, date:n.dk, timeIn:n.timeIn||"", timeOut:n.timeOut||"", vs:n.vs, topic:n.topic, intervention:n.intervention, lastBM:n.lastBM, isLastNote:n.isLast, painLevel:n.painLevel, phase:n.phase, painLoc:n.painLoc});
     const tag = n.timeIn ? "-"+n.timeIn.replace(":","") : "";
     const filename = `Note-${(n.poc?.patient?.name||"patient").replace(/[\s,]+/g,"-")}-${n.dk.replace(/\//g,"-")}${tag}.html`;
     return { filename, html };
@@ -880,16 +883,21 @@ export default function App() {
           return next;
         });
       },
+      // map: { "MM/DD/YYYY": "Nurse Name / LVN" } — each visit keeps its own nurse
+      setVisitNurses: (map) => {
+        setDateNurses(prev => ({ ...prev, ...(map||{}) }));
+      },
       extract: () => { extract485(); },
       generate: () => { generateAll(); },
       getState: () => ({
         hasFile: !!file, extracting, generating, hasPoc: !!poc,
         agency: agencyName, nurse: snName, dates: dates.map(fmtDate),
+        visitNurses: dateNurses,
         noteCount: notes.length, status: genStatus, error
       }),
       getNotesHTML: () => notes.map(noteToHTML)
     };
-  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, notes, genStatus, error]);
+  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, dateNurses, notes, genStatus, error]);
 
   // Stage badge
   const stageBadge = poc ? {
