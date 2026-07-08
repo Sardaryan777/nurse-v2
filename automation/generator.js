@@ -14,8 +14,6 @@ const launchOpts = {
     "--disable-setuid-sandbox",
     "--disable-dev-shm-usage",
     "--disable-gpu",
-    "--no-zygote",
-    "--single-process",
     "--disable-software-rasterizer",
     "--disable-extensions"
   ]
