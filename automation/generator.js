@@ -36,6 +36,21 @@ async function waitForState(page, predicate, { timeout = 180000, interval = 1500
   throw new Error(`Timed out waiting for generator state${label ? ": " + label : ""}`);
 }
 
+// Wait for note generation to settle WITHOUT throwing on error — an error/skip
+// here (e.g. all dates outside the cert period) is a valid outcome the caller
+// inspects. Returns the final state.
+async function waitForSettle(page, timeout) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const s = await page.evaluate(() => window.__automation?.getState?.() || null);
+    if (s && !s.generating && !s.extracting) {
+      if (s.noteCount > 0 || (s.skippedDates && s.skippedDates.length > 0) || s.error) return s;
+    }
+    await sleep(1500);
+  }
+  throw new Error("Timed out waiting for note generation");
+}
+
 /**
  * Drive the generator end-to-end.
  * @param {Object} opts
@@ -95,22 +110,31 @@ export async function runGenerator(opts) {
     await page.evaluate((a) => window.__automation.setAgency(a), agencyName || "");
     await sleep(300);
 
-    // 5. Click Generate and wait for completion.
+    // 5. Click Generate and wait for it to settle.
     // Each note is its own Claude call, so scale the timeout with the number of
-    // dates (~20s per note) with a 5-minute floor.
+    // dates (~20s per note) with a 5-minute floor. Generation "settles" when it
+    // stops running and either produced notes, skipped every date (all outside
+    // the cert period), or reported an error.
     const genTimeout = Math.max(300000, dates.length * 20000);
     await page.evaluate(() => window.__automation.generate());
-    const finalState = await waitForState(
-      page,
-      s => !s.generating && s.noteCount > 0,
-      { timeout: genTimeout, label: "note generation" }
-    );
+    const finalState = await waitForSettle(page, genTimeout);
 
-    // 6. Retrieve generated HTML for every note.
+    const skippedDates = finalState.skippedDates || [];
+    const certPeriod = finalState.certPeriod || { start: "", end: "" };
+
+    // 6. If nothing was generated:
+    if (finalState.noteCount === 0) {
+      // All dates outside the cert period is a valid outcome — report it back
+      // so the worker can reply to the email explaining the mismatch.
+      if (skippedDates.length > 0) {
+        console.log(`No notes generated — all ${skippedDates.length} date(s) outside cert period ${certPeriod.start}–${certPeriod.end}.`);
+        return { pdfs: [], skippedDates, certPeriod };
+      }
+      throw new Error(finalState.error || "Generator produced no notes");
+    }
+
+    // 7. Retrieve generated HTML and render each to a real PDF.
     const notesHTML = await page.evaluate(() => window.__automation.getNotesHTML());
-    if (!notesHTML.length) throw new Error("Generator produced no notes");
-
-    // 7. Render each HTML note to a real PDF via the print engine.
     const pdfs = [];
     for (const note of notesHTML) {
       const p = await browser.newPage();
@@ -127,8 +151,9 @@ export async function runGenerator(opts) {
       });
     }
 
-    console.log(`Rendered ${pdfs.length} PDF(s) for ${finalState.dates.length} date(s).`);
-    return pdfs;
+    if (skippedDates.length) console.log(`Skipped ${skippedDates.length} date(s) outside cert period: ${skippedDates.join(", ")}`);
+    console.log(`Rendered ${pdfs.length} PDF(s).`);
+    return { pdfs, skippedDates, certPeriod };
   } finally {
     await browser.close();
     fs.unlink(tmpPdf).catch(() => {});

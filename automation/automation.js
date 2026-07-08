@@ -77,8 +77,8 @@ async function processMessage(gmail, messageRef) {
   const { dates, times, nurses } = buildScheduleInputs(visits);
   log(`  Dates: ${dates.join(", ")}`);
 
-  // 5. Drive the generator site -> PDFs.
-  const pdfs = await runGenerator({
+  // 5. Drive the generator site -> PDFs (+ any dates skipped for cert period).
+  const { pdfs, skippedDates = [], certPeriod = { start: "", end: "" } } = await runGenerator({
     url: GENERATOR_URL,
     pdfBuffer: msg.pdf.buffer,
     pdfFilename: msg.pdf.filename,
@@ -89,18 +89,39 @@ async function processMessage(gmail, messageRef) {
     nurses
   });
 
-  // 6. Reply with all PDFs attached.
+  const certLabel = (certPeriod.start || certPeriod.end)
+    ? `${certPeriod.start || "?"} – ${certPeriod.end || "?"}`
+    : "the certification period on the 485";
+
+  // 6. Reply.
   const nurseLabel = uniqueNurses.length > 1
     ? `nurses ${uniqueNurses.join(", ")}`
     : (uniqueNurses[0] || nurseName || "the nurse");
-  const replyText =
-    `Hello,\n\nAttached are the ${pdfs.length} generated clinical note${pdfs.length > 1 ? "s" : ""} ` +
-    `for ${nurseLabel}${agencyName ? " (" + agencyName + ")" : ""}.\n\n` +
-    `Visit dates: ${dates.join(", ")}\n\n` +
-    `— Automated Clinical Note Generator`;
 
-  await replyWithAttachments(gmail, msg, { text: replyText, attachments: pdfs });
-  log(`  Replied with ${pdfs.length} PDF(s).`);
+  if (pdfs.length === 0) {
+    // Every visit date is outside the cert period — nothing generated.
+    const text =
+      `Hello,\n\nNo clinical notes were generated. All requested visit date(s) fall OUTSIDE the ` +
+      `certification period of this 485 (${certLabel}).\n\n` +
+      `Requested dates: ${dates.join(", ")}\n\n` +
+      `Please check that the correct 485 was attached, or that the visit dates match the cert period, and resend.\n\n` +
+      `— Automated Clinical Note Generator`;
+    await replyWithAttachments(gmail, msg, { text, attachments: [] });
+    log(`  Replied: all dates outside cert period (${certLabel}). No notes generated.`);
+  } else {
+    let text =
+      `Hello,\n\nAttached are the ${pdfs.length} generated clinical note${pdfs.length > 1 ? "s" : ""} ` +
+      `for ${nurseLabel}${agencyName ? " (" + agencyName + ")" : ""}.\n\n` +
+      `Visit dates generated: ${dates.filter(d => !skippedDates.includes(d)).join(", ")}\n`;
+    if (skippedDates.length) {
+      text +=
+        `\n⚠️ The following date(s) were NOT generated because they fall OUTSIDE the ` +
+        `certification period (${certLabel}):\n${skippedDates.join(", ")}\n`;
+    }
+    text += `\n— Automated Clinical Note Generator`;
+    await replyWithAttachments(gmail, msg, { text, attachments: pdfs });
+    log(`  Replied with ${pdfs.length} PDF(s).${skippedDates.length ? ` Skipped ${skippedDates.length} out-of-period date(s).` : ""}`);
+  }
 
   // 7. Mark read.
   await markRead(gmail, msg.id);
