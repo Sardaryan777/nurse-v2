@@ -13,7 +13,11 @@ const launchOpts = {
     "--no-sandbox",
     "--disable-setuid-sandbox",
     "--disable-dev-shm-usage",
-    "--disable-gpu"
+    "--disable-gpu",
+    "--no-zygote",
+    "--single-process",
+    "--disable-software-rasterizer",
+    "--disable-extensions"
   ]
 };
 if (process.env.PUPPETEER_EXECUTABLE_PATH) {
