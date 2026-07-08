@@ -82,6 +82,17 @@ function parseBulkInput(text) {
 const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAYS=["Su","Mo","Tu","We","Th","Fr","Sa"];
 
+// Parse a certification-period date ("MM/DD/YYYY", "YYYY-MM-DD", "MM-DD-YYYY") -> Date | null
+function parseCertDate(s) {
+  if (!s) return null;
+  s = String(s).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) { const d = new Date(+m[1], +m[2]-1, +m[3]); return isNaN(d) ? null : d; }
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (m) { let y = +m[3]; if (y < 100) y += 2000; const d = new Date(y, +m[1]-1, +m[2]); return isNaN(d) ? null : d; }
+  const d = new Date(s); return isNaN(d) ? null : d;
+}
+
 // ── SYSTEM PROMPT — extract POC info ─────────────────────────────────────────
 const EXTRACT_PROMPT = `You are an expert LVN. Extract ALL information from this CMS-485 Plan of Care and return ONLY valid compact JSON (no markdown, no backticks, no explanation).
 
@@ -91,11 +102,11 @@ Detect stage automatically:
 - If "Discharge" → stage = "DISCHARGE"
 
 Return this exact structure:
-{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
+{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"hasPain":true,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
 
 RULES:
 - stage: exactly "SOC", "RECERT", or "DISCHARGE"  
-- diagnoses: ["CODE - Description", ...]
+- diagnoses: ["CODE - Description", ...] — copied VERBATIM from this document ONLY. NEVER invent, infer, or add typical/expected diagnoses
 - medications: ["full medication string", ...] — copied VERBATIM from this document ONLY. NEVER invent, infer, or add typical/expected medications. If the document references an external med list (e.g. "See Meds 487") that is not attached, extract ONLY the medications visibly printed here and nothing more
 - teachingTopics: ordered list of 9 SHORT ALL-CAPS topic labels (2-5 words each). Derived from diagnoses, most acute first. For RECERT/DISCHARGE: last topic = "MEDICATION SAFETY & DISCHARGE PLANNING". Examples: "ACUTE RESPIRATORY FAILURE", "HOME SAFETY & FALL PRECAUTIONS", "ANXIETY & LORAZEPAM MEDICATION", "BENIGN PROSTATIC HYPERPLASIA", "BIPOLAR DISORDER", "DEPRESSION & CITALOPRAM MEDICATION", "DIFFICULTY IN WALKING", "HYPERLIPIDEMIA & ROSUVASTATIN", "PAIN MANAGEMENT & TYLENOL"
 - hasPleurX: true if PleurX catheter mentioned in document\n- hasParalysis: true ONLY if paralysis, paraplegia, hemiplegia, or quadriplegia is explicitly diagnosed. Default false — do NOT assume paralysis from weakness or difficulty walking\n- hasCaregiver: true if PCG, caregiver, family member, or caregiver involvement is documented in the POC. Default false
@@ -105,11 +116,13 @@ RULES:
 - hasDysphagia: true if dysphagia diagnosed. proneToAspiration: true if dysphagia or aspiration risk documented
 - lungSounds: "clear" unless 485 documents wheezes/crackles/diminished (then use that word, e.g. "anterior wheezes")
 - hasTremor: true if tremor diagnosis (essential tremor, Parkinson's) in diagnosis list\n- hasVertigo: true if vertigo or dizziness disorder diagnosed (e.g. H81.x peripheral vertigo)
+- referencesExternal487: true if this 485 references an external form (\"See 487\", \"See Meds 487\", \"see addendum\") whose content is NOT attached to this request\n- hasPain: true ONLY if a pain-related diagnosis exists (chronic pain, arthritis, back pain, sciatica, spondylosis, neuropathy with pain, fibromyalgia) OR current pain is documented in the medical summary/item 99. A generic order to 'assess pain 0-10' does NOT mean the patient has pain — set false if no pain diagnosis or documented pain finding
+- mentalStatus.depressedControlled: true when item 19 marks Depressed AND an antidepressant/psychiatric medication (bupropion, escitalopram, sertraline, citalopram, aripiprazole, etc.) is in the med list
 - hasPVD: true if peripheral vascular/arterial disease diagnosed
 - hasWalker/hasCane/hasWheelchair: true ONLY if that device is in DME/supplies or activities permitted. Do NOT default to true
 - homeboundFlags: read the 485's homebound statement and set each flag from it: limitedEndurance, limitedStrength, assistADL (needs assistance for activities), unevenSurfaces, confusion (only if confusion listed as homebound reason), unableToLeaveAlone, poorCoordination, taxingEffort
 - mentalStatus: set each flag true ONLY if documented in Mental Status section (item 19) or medical summary. depressedControlled=true ONLY if depression documented AND a psychiatric medication exists in med list
-- deficits: set each flag true ONLY if that finding is explicitly documented in this 485/POC (functional limitations, medical summary, diagnoses, item 99). Do NOT assume or default any deficit to true. Examples: poorVision only if impaired/blurred vision documented; hoh only if HOH/hearing impairment; sob only if SOB/dyspnea; urinaryIncontinence/bowelIncontinence only if incontinence documented; edema only if edema documented; stiffJoints/weakness/limitedROM/unsteadyBalance only if documented
+- deficits: set each flag true ONLY if that finding is explicitly documented as a CURRENT finding. IGNORE symptoms that appear only in report-to-MD parameters, warning lists, or 'notify MD if...' instructions (e.g. 'report blurred vision' does NOT mean the patient has poor vision) in this 485/POC (functional limitations, medical summary, diagnoses, item 99). Do NOT assume or default any deficit to true. Examples: poorVision only if impaired/blurred vision documented; hoh only if HOH/hearing impairment; sob only if SOB/dyspnea; urinaryIncontinence/bowelIncontinence only if incontinence documented; edema only if edema documented; stiffJoints/weakness/limitedROM/unsteadyBalance only if documented
 - isDiabetic: true if diabetes, insulin, blood sugar monitoring, or diabetic care mentioned
 - leftArmRestricted: true if left mastectomy, left-arm restriction, or "no BP/blood draw left arm" mentioned
 - injectable: scan medications AND nursing orders for any INJECTABLE medication (insulin, Lantus, Solostar, Humalog, Novolog, enoxaparin, Lovenox, B12, etc). If found, set found=true and extract: name (e.g. "Lantus Solostar Insulin"), dose (e.g. "30 units"), route ("subcutaneous"), frequency ("twice daily" or "once daily"), instruction (brief admin note). If no injectable, found=false.`;
@@ -426,9 +439,6 @@ async function fileToBase64(file) {
 
 // ── BUILD HTML NOTE ───────────────────────────────────────────────────────────
 function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topic, intervention, lastBM, isLastNote, painLevel=4, phase="EARLY", painLoc="lower back"}) {
-  // Checkbox = font glyph forced to a symbol font present in both the browser
-  // and the robot's Linux container. line-height:0 keeps it from pushing the
-  // note onto a 2nd page.
   const cbFont = "'Segoe UI Symbol','DejaVu Sans','Arial Unicode MS',sans-serif";
   const bh = v => `<span style="font-family:${cbFont};font-size:8.4pt;line-height:0">${v ? "&#9746;" : "&#9744;"}</span>`;
   const ms = poc.mentalStatus||{};
@@ -597,10 +607,10 @@ O2sat <u>${poc.o2Sat||vs.o2||"96"}%</u> LPM &nbsp;Other</div>
 ${bh(df.stiffJoints||false)}Stiff joints ${bh(df.weakness||false)}Weakness ${bh(df.limitedROM||false)}Limited ROM<br>
 ${bh(poc.hasCane||false)}cane ${bh(poc.hasWalker===true)}walker ${bh(poc.hasWheelchair||false)}W/C ${bh(poc.hasContracture||false)}Contractures ${bh(false)} Foot drop${bh(df.unsteadyBalance===true&&!poc.isBedbound)}Unsteady balance ${bh(false)}Other</div>
 
-<div class="sec"><b>PAIN: </b>${bh(false)}No ${bh(true)} Yes Location: <u>${painLoc}</u><br>
-Intensity: ${[1,2,3,4,5,6,7,8,9,10].map(n=>n===painLevel?`<u><b>${n}</b></u>`:n).join(" ")} &nbsp;<b>(${painLevel}/10)</b><br>
-${bh(false)}Sharp ${bh(painChar==="dull")} Dull ${bh(painChar==="radiating")}Radiating ${bh(false)}Burning<br>
-Controlled ${bh(false)}No ${bh(true)} Yes by: ${painControlLine}</div>
+<div class="sec"><b>PAIN: </b>${bh(poc.hasPain===false)}No ${bh(poc.hasPain!==false)} Yes Location: <u>${poc.hasPain===false?"":painLoc}</u><br>
+Intensity: ${poc.hasPain===false?"1 2 3 4 5 6 7 8 9 10":[1,2,3,4,5,6,7,8,9,10].map(n=>n===painLevel?`<u><b>${n}</b></u>`:n).join(" ")+` &nbsp;<b>(${painLevel}/10)</b>`}<br>
+${bh(false)}Sharp ${bh(poc.hasPain!==false&&painChar==="dull")} Dull ${bh(poc.hasPain!==false&&painChar==="radiating")}Radiating ${bh(false)}Burning<br>
+Controlled ${bh(false)}No ${bh(poc.hasPain!==false)} ${poc.hasPain===false?"Yes by:":"Yes by: "+painControlLine}</div>
 
 <div class="sec"><div class="st">GASTROINTESTINAL:</div>
 ${bh(false)}Nausea ${bh(false)}Vomiting ${bh(false)}Diarrhea<br>
@@ -716,13 +726,16 @@ export default function App() {
   const [dates,      setDates]      = useState([]);
   const [dateTimes,  setDateTimes]  = useState({});
   const [dateNurses, setDateNurses] = useState({}); // { "MM/DD/YYYY": "Nurse Name / LVN" } per-visit nurse override
+  const [skippedDates, setSkippedDates] = useState([]); // visit dates outside the cert period (not generated)
   const [previewVS,  setPreviewVS]  = useState(()=>pickVS());
   const [bidPatient, setBidPatient] = useState(false);
   const [autoAMPM,   setAutoAMPM]   = useState(false);
   const [dischargeOn,setDischargeOn]= useState(false);
   const [bulkText,   setBulkText]   = useState("");
   const [bulkEntries,setBulkEntries]= useState([]); // parsed [{date,timeIn,timeOut}]
+  const [file487,    setFile487]    = useState(null);
   const fileRef = useRef(null);
+  const fileRef487 = useRef(null);
 
   const setTimeForDate=(dk,field,val)=>setDateTimes(prev=>({...prev,[dk]:{...(prev[dk]||{inH:null,inM:0,inAP:"AM",outH:null,outM:0,outAP:"AM"}),[field]:val}}));
   const getTime=dk=>dateTimes[dk]||{inH:null,inM:0,inAP:"AM",outH:null,outM:0,outAP:"AM"};
@@ -744,7 +757,17 @@ export default function App() {
       const block = isImg
         ? {type:"image",source:{type:"base64",media_type:file.type,data:base64}}
         : {type:"document",source:{type:"base64",media_type:"application/pdf",data:base64}};
-      const raw = await callAPI([{role:"user",content:[block,{type:"text",text:"Extract ALL information from this 485 Plan of Care. Return ONLY the JSON."}]}], EXTRACT_PROMPT, 3000);
+      const content = [block];
+      if (file487) {
+        const b487 = await fileToBase64(file487);
+        content.push(file487.type.startsWith("image/")
+          ? {type:"image",source:{type:"base64",media_type:file487.type,data:b487}}
+          : {type:"document",source:{type:"base64",media_type:"application/pdf",data:b487}});
+      }
+      content.push({type:"text",text: file487
+        ? "Extract ALL information from this 485 Plan of Care AND the attached 487 addendum (additional medications/diagnoses). Merge both documents into ONE profile. Return ONLY the JSON."
+        : "Extract ALL information from this 485 Plan of Care. Return ONLY the JSON."});
+      const raw = await callAPI([{role:"user",content}], EXTRACT_PROMPT, 3000);
       const s=raw.indexOf("{"),e=raw.lastIndexOf("}");
       if(s===-1||e===-1) throw new Error("No JSON in response");
       const data = JSON.parse(raw.slice(s,e+1));
@@ -781,6 +804,30 @@ export default function App() {
 
     if (visits.length === 0) { setError("Add visit dates (calendar) or paste bulk dates/times."); return; }
 
+    // ── Certification-period gate ──────────────────────────────────────────
+    // Visit dates outside the 485 cert period are NOT generated (compliance).
+    // Skipped dates are recorded so the automation can report them by email.
+    const certStart = parseCertDate(poc.certPeriodStart);
+    const certEnd   = parseCertDate(poc.certPeriodEnd);
+    let skipped = [];
+    if (certStart && certEnd) {
+      certStart.setHours(0,0,0,0);
+      certEnd.setHours(23,59,59,999);
+      const inPeriod = [];
+      for (const v of visits) {
+        if (v.date < certStart || v.date > certEnd) skipped.push(v.dk);
+        else inPeriod.push(v);
+      }
+      visits = inPeriod;
+    }
+    setSkippedDates(skipped);
+    if (visits.length === 0) {
+      setNotes([]);
+      setGenStatus("");
+      setError(`No notes generated — all visit date(s) fall outside the 485 certification period (${poc.certPeriodStart || "?"} – ${poc.certPeriodEnd || "?"}). Wrong 485 or wrong dates?`);
+      return;
+    }
+
     // Warn if any visit is missing a time
     const missingTimes = visits.filter(v => !v.timeIn || !v.timeOut);
     if (missingTimes.length > 0 && bulkEntries.length === 0 && !autoAMPM) {
@@ -816,6 +863,7 @@ export default function App() {
         const subject = poc.hasCaregiver ? "patient/caregiver" : "patient";
         const subjectCap = poc.hasCaregiver ? "Patient/caregiver" : "Patient";
         const painLoc = getPainLocation(topic, poc.diagnoses);
+        const noPain = poc.hasPain === false;
         const painMed = findPainMed(poc.medications);
         const painMedPhrase = painMed ? (painMed + " as ordered") : "current pain management measures per MD orders";
         const hasResp = hasRespiratoryMed(poc.medications) ? "YES" : "NO";
@@ -833,8 +881,8 @@ export default function App() {
         const prevNote = prevTopics.length>0 ? ` Previously covered: ${prevTopics.slice(-3).join(", ")}. Use different phrasing.` : "";
         const prompt=NOTE_PROMPT
           .replace(/\{PHASE\}/g,phase)
-          .replace(/\{PAIN\}/g,painLevel)
-          .replace(/\{PAINLOC\}/g,painLoc)
+          .replace(/\{PAIN\}/g,noPain?"0 — NO documented pain; write \'Patient denies pain this visit; pain assessed per MD orders\' instead of any pain rating or pain location":painLevel)
+          .replace(/\{PAINLOC\}/g,noPain?"none documented":painLoc)
           .replace(/\{PAINCHAR\}/g,getPainCharacter(poc.diagnoses))
           .replace(/\{PAINMED\}/g,painMed||"none")
           .replace(/\{PAINMED_PHRASE\}/g,painMedPhrase)
@@ -890,7 +938,6 @@ export default function App() {
           lastBM:fmtDateDot(bmDate), poc,
           timeIn:v.timeIn, timeOut:v.timeOut, injSite,
           painLevel, phase, painLoc,
-          // Each visit keeps its own nurse; falls back to the global SN name.
           nurseName: dateNurses[dk] || ""
         });
         prevTopics.push(topic);
@@ -937,7 +984,6 @@ export default function App() {
   };
 
   // ── AUTOMATION BRIDGE ──────────────────────────────────────────────────────
-  // Stable programmatic API used by the Puppeteer worker. Human UI unchanged.
   const noteToHTML = (n) => {
     const html = buildNoteHTML({poc:n.poc, agencyName, snName:n.nurseName||snName, date:n.dk, timeIn:n.timeIn||"", timeOut:n.timeOut||"", vs:n.vs, topic:n.topic, intervention:n.intervention, lastBM:n.lastBM, isLastNote:n.isLast, painLevel:n.painLevel, phase:n.phase, painLoc:n.painLoc});
     const tag = n.timeIn ? "-"+n.timeIn.replace(":","") : "";
@@ -946,7 +992,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 3, ready: true,
+      version: 4, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setDates: (dateStrs) => {
@@ -963,7 +1009,6 @@ export default function App() {
           return next;
         });
       },
-      // map: { "MM/DD/YYYY": "Nurse Name / LVN" } — each visit keeps its own nurse
       setVisitNurses: (map) => {
         setDateNurses(prev => ({ ...prev, ...(map||{}) }));
       },
@@ -973,11 +1018,13 @@ export default function App() {
         hasFile: !!file, extracting, generating, hasPoc: !!poc,
         agency: agencyName, nurse: snName, dates: dates.map(fmtDate),
         visitNurses: dateNurses,
+        certPeriod: { start: poc?.certPeriodStart || "", end: poc?.certPeriodEnd || "" },
+        skippedDates,
         noteCount: notes.length, status: genStatus, error
       }),
       getNotesHTML: () => notes.map(noteToHTML)
     };
-  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, dateNurses, notes, genStatus, error]);
+  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, dateNurses, skippedDates, notes, genStatus, error]);
 
   // Stage badge
   const stageBadge = poc ? {
@@ -1150,6 +1197,17 @@ export default function App() {
             }
           </div>
 
+          {/* Optional 487 addendum */}
+          {file && (
+            <div onClick={()=>fileRef487.current?.click()}
+              style={{border:"1.5px dashed #cbd5e0",borderRadius:8,padding:"8px 12px",textAlign:"center",cursor:"pointer",background:file487?"#f0fdf4":"#fafafa",marginBottom:10,fontSize:12}}>
+              <input ref={fileRef487} type="file" accept="image/*,application/pdf" style={{display:"none"}} onChange={e=>{setFile487(e.target.files[0]);setPoc(null);}}/>
+              {file487
+                ? <span style={{color:"#166534",fontWeight:600}}>📎 487 attached: {file487.name} <span onClick={e=>{e.stopPropagation();setFile487(null);setPoc(null);}} style={{color:"#ef4444",fontWeight:700,marginLeft:6}}>✕</span></span>
+                : <span style={{color:"#94a3b8"}}>📎 Optional: attach 487 / med-list addendum (click) — recommended when 485 says "See 487"</span>}
+            </div>
+          )}
+
           {/* Extract button */}
           {file&&!poc&&(
             <button data-testid="extract-btn" onClick={extract485} disabled={extracting}
@@ -1167,10 +1225,40 @@ export default function App() {
                 <button onClick={()=>{setPoc(null);setNotes([]);}} style={{marginLeft:"auto",fontSize:10,color:"#6b7280",background:"none",border:"none",cursor:"pointer"}}>✕ Clear</button>
               </div>
               <div style={{fontSize:11,color:"#374151",lineHeight:1.8}}>
-                <strong>{poc.patient?.name}</strong> · MR# {poc.patient?.mrNumber}<br/>
-                <span style={{color:"#6b7280"}}>Diag: {(poc.diagnoses||[]).length} · Meds: {(poc.medications||[]).length} · Topics: {(poc.teachingTopics||[]).length}</span><br/>
-                <span style={{fontSize:10,color:"#2b6cb0",fontWeight:600}}>Topics: {(poc.teachingTopics||[]).join(" → ")}</span>
+                <strong>{poc.patient?.name}</strong> · MR# {poc.patient?.mrNumber} · Cert: {poc.certPeriodStart} – {poc.certPeriodEnd}<br/>
+                <span style={{color:"#6b7280"}}>Diag: {(poc.diagnoses||[]).length} · Meds: {(poc.medications||[]).length} · Topics: {(poc.teachingTopics||[]).length}</span>
               </div>
+              {/* Clinical Profile chips — everything analyzed from THIS 485 */}
+              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6}}>
+                {[
+                  poc.isBedbound?["🛏 Bedbound","#fef3c7","#92400e"]:["🚶 Ambulatory","#dbeafe","#1e40af"],
+                  poc.hasWalker&&["🦯 Walker","#e0e7ff","#3730a3"],
+                  poc.hasCane&&["🦯 Cane","#e0e7ff","#3730a3"],
+                  poc.hasWheelchair&&["♿ W/C","#e0e7ff","#3730a3"],
+                  poc.hasWound&&[`🩹 Wound${poc.woundStage?" St."+poc.woundStage:""}`,"#fee2e2","#991b1b"],
+                  poc.isDiabetic&&["🩸 Diabetic","#fce7f3","#9d174d"],
+                  poc.injectable?.found&&[`💉 ${poc.injectable.name||"Injectable"}`,"#fce7f3","#9d174d"],
+                  poc.hasPain===false?["🚫 No documented pain","#f3f4f6","#374151"]:[`⚡ Pain: ${getPainLocation("",poc.diagnoses)}${findPainMed(poc.medications)?" · "+findPainMed(poc.medications):" · no analgesic listed"}`,"#fef9c3","#854d0e"],
+                  poc.hasCaregiver&&["👥 Caregiver","#d1fae5","#065f46"],
+                  poc.hasParalysis&&["⚠️ Paralysis","#fee2e2","#991b1b"],
+                  poc.hasVertigo&&["💫 Vertigo","#fef3c7","#92400e"],
+                  poc.hasTremor&&["👋 Tremor","#fef3c7","#92400e"],
+                  poc.hasDysphagia&&["🍽 Dysphagia","#fee2e2","#991b1b"],
+                  poc.deficits?.hoh&&["👂 HOH","#f3f4f6","#374151"],
+                  poc.deficits?.poorVision&&["👁 Poor vision","#f3f4f6","#374151"],
+                  poc.deficits?.sob&&["💨 SOB","#f3f4f6","#374151"],
+                  (poc.deficits?.urinaryIncontinence||poc.deficits?.bowelIncontinence)&&["🚽 Incontinence","#f3f4f6","#374151"],
+                ].filter(Boolean).map(([label,bg,col],i)=>(
+                  <span key={i} style={{fontSize:10,background:bg,color:col,padding:"2px 8px",borderRadius:10,fontWeight:600}}>{label}</span>
+                ))}
+              </div>
+              {/* Warnings from analysis */}
+              {(poc.referencesExternal487 && !file487) && (
+                <div style={{marginTop:6,fontSize:10.5,background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:6,padding:"5px 9px",color:"#92400e"}}>
+                  ⚠️ This 485 references a <b>487 addendum</b> that isn't attached — medication/diagnosis list may be incomplete. Attach the 487 above and re-extract for full accuracy.
+                </div>
+              )}
+              <div style={{fontSize:10,color:"#2b6cb0",fontWeight:600,marginTop:6}}>Topics: {(poc.teachingTopics||[]).join(" → ")}</div>
               {file&&<button onClick={()=>{setPoc(null);extract485();}} style={{marginTop:6,fontSize:10,color:"#2b6cb0",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:5,padding:"2px 8px",cursor:"pointer",fontWeight:600}}>🔄 Re-extract</button>}
             </div>
           )}
