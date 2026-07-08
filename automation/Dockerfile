@@ -1,8 +1,11 @@
-# ── Automation worker: Node + system Chromium for Puppeteer ──────────────────
+# ── Automation worker: Puppeteer with its OWN matched Chromium ───────────────
 FROM node:20-slim
 WORKDIR /app
 
-# Install Chromium and the libraries Puppeteer needs to run it headless.
+# Install the system libraries + fonts Chromium needs at runtime. We keep the
+# `chromium` apt package too because it pulls in the full set of shared-library
+# dependencies, but Puppeteer will download and run its OWN version-matched
+# Chromium (more reliable than driving the system one).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     ca-certificates \
@@ -10,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu \
     fonts-dejavu-core \
     fonts-dejavu-extra \
+    fonts-noto-core \
     fonts-noto-color-emoji \
     libnss3 \
     libatk-bridge2.0-0 \
@@ -27,10 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
   && rm -rf /var/lib/apt/lists/*
 
-# Use the system Chromium; skip Puppeteer's bundled download.
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
+# Let Puppeteer download its own matched Chromium during npm install.
+# (No PUPPETEER_SKIP_DOWNLOAD / PUPPETEER_EXECUTABLE_PATH, so it uses the bundled one.)
 COPY package.json ./
 RUN npm install --omit=dev
 COPY . .
