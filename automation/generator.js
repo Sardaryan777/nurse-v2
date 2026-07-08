@@ -9,6 +9,9 @@ import path from "path";
 
 const launchOpts = {
   headless: "new",
+  // Large batches keep the browser busy well past Puppeteer's 180s default;
+  // raise the CDP protocol timeout so long generations don't error out.
+  protocolTimeout: 600000,
   args: [
     "--no-sandbox",
     "--disable-setuid-sandbox",

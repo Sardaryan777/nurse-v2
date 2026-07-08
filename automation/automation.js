@@ -59,6 +59,15 @@ async function processMessage(gmail, messageRef) {
     return;
   }
 
+  // Never re-process our OWN generated notes (their filename looks like
+  // "Note-PATIENT-MM-DD-YYYY-....pdf"). This prevents a reply loop where the
+  // robot picks up the notes it just sent and treats them as a new 485.
+  if (/^Note-.+-\d{2}-\d{2}-\d{4}/i.test(msg.pdf.filename || "")) {
+    log(`Attachment "${msg.pdf.filename}" is a generated note (our own output) — skipping + marking read.`);
+    await markRead(gmail, msg.id);
+    return;
+  }
+
   log(`Processing email from ${msg.from} — "${msg.subject}" (PDF: ${msg.pdf.filename})`);
 
   // 3. Agency name from the PDF.
