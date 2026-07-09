@@ -102,7 +102,7 @@ Detect stage automatically:
 - If "Discharge" → stage = "DISCHARGE"
 
 Return this exact structure:
-{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"hasPain":true,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
+{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
 
 RULES:
 - stage: exactly "SOC", "RECERT", or "DISCHARGE"  
@@ -116,8 +116,7 @@ RULES:
 - hasDysphagia: true if dysphagia diagnosed. proneToAspiration: true if dysphagia or aspiration risk documented
 - lungSounds: "clear" unless 485 documents wheezes/crackles/diminished (then use that word, e.g. "anterior wheezes")
 - hasTremor: true if tremor diagnosis (essential tremor, Parkinson's) in diagnosis list\n- hasVertigo: true if vertigo or dizziness disorder diagnosed (e.g. H81.x peripheral vertigo)
-- referencesExternal487: true if this 485 references an external form (\"See 487\", \"See Meds 487\", \"see addendum\") whose content is NOT attached to this request\n- hasPain: true ONLY if a pain-related diagnosis exists (chronic pain, arthritis, back pain, sciatica, spondylosis, neuropathy with pain, fibromyalgia) OR current pain is documented in the medical summary/item 99. A generic order to 'assess pain 0-10' does NOT mean the patient has pain — set false if no pain diagnosis or documented pain finding
-- mentalStatus.depressedControlled: true when item 19 marks Depressed AND an antidepressant/psychiatric medication (bupropion, escitalopram, sertraline, citalopram, aripiprazole, etc.) is in the med list
+- referencesExternal487: true if this 485 references an external form (\"See 487\", \"See Meds 487\", \"see addendum\") whose content is NOT attached to this request\n- mentalStatus.depressedControlled: true when item 19 marks Depressed AND an antidepressant/psychiatric medication (bupropion, escitalopram, sertraline, citalopram, aripiprazole, etc.) is in the med list
 - hasPVD: true if peripheral vascular/arterial disease diagnosed
 - hasWalker/hasCane/hasWheelchair: true ONLY if that device is in DME/supplies or activities permitted. Do NOT default to true
 - homeboundFlags: read the 485's homebound statement and set each flag from it: limitedEndurance, limitedStrength, assistADL (needs assistance for activities), unevenSurfaces, confusion (only if confusion listed as homebound reason), unableToLeaveAlone, poorCoordination, taxingEffort
@@ -607,10 +606,10 @@ O2sat <u>${poc.o2Sat||vs.o2||"96"}%</u> LPM &nbsp;Other</div>
 ${bh(df.stiffJoints||false)}Stiff joints ${bh(df.weakness||false)}Weakness ${bh(df.limitedROM||false)}Limited ROM<br>
 ${bh(poc.hasCane||false)}cane ${bh(poc.hasWalker===true)}walker ${bh(poc.hasWheelchair||false)}W/C ${bh(poc.hasContracture||false)}Contractures ${bh(false)} Foot drop${bh(df.unsteadyBalance===true&&!poc.isBedbound)}Unsteady balance ${bh(false)}Other</div>
 
-<div class="sec"><b>PAIN: </b>${bh(poc.hasPain===false)}No ${bh(poc.hasPain!==false)} Yes Location: <u>${poc.hasPain===false?"":painLoc}</u><br>
-Intensity: ${poc.hasPain===false?"1 2 3 4 5 6 7 8 9 10":[1,2,3,4,5,6,7,8,9,10].map(n=>n===painLevel?`<u><b>${n}</b></u>`:n).join(" ")+` &nbsp;<b>(${painLevel}/10)</b>`}<br>
-${bh(false)}Sharp ${bh(poc.hasPain!==false&&painChar==="dull")} Dull ${bh(poc.hasPain!==false&&painChar==="radiating")}Radiating ${bh(false)}Burning<br>
-Controlled ${bh(false)}No ${bh(poc.hasPain!==false)} ${poc.hasPain===false?"Yes by:":"Yes by: "+painControlLine}</div>
+<div class="sec"><b>PAIN: </b>${bh(false)}No ${bh(true)} Yes Location: <u>${painLoc}</u><br>
+Intensity: ${[1,2,3,4,5,6,7,8,9,10].map(n=>n===painLevel?`<u><b>${n}</b></u>`:n).join(" ")} &nbsp;<b>(${painLevel}/10)</b><br>
+${bh(false)}Sharp ${bh(painChar==="dull")} Dull ${bh(painChar==="radiating")}Radiating ${bh(false)}Burning<br>
+Controlled ${bh(false)}No ${bh(true)} Yes by: ${painControlLine}</div>
 
 <div class="sec"><div class="st">GASTROINTESTINAL:</div>
 ${bh(false)}Nausea ${bh(false)}Vomiting ${bh(false)}Diarrhea<br>
@@ -863,7 +862,6 @@ export default function App() {
         const subject = poc.hasCaregiver ? "patient/caregiver" : "patient";
         const subjectCap = poc.hasCaregiver ? "Patient/caregiver" : "Patient";
         const painLoc = getPainLocation(topic, poc.diagnoses);
-        const noPain = poc.hasPain === false;
         const painMed = findPainMed(poc.medications);
         const painMedPhrase = painMed ? (painMed + " as ordered") : "current pain management measures per MD orders";
         const hasResp = hasRespiratoryMed(poc.medications) ? "YES" : "NO";
@@ -881,8 +879,8 @@ export default function App() {
         const prevNote = prevTopics.length>0 ? ` Previously covered: ${prevTopics.slice(-3).join(", ")}. Use different phrasing.` : "";
         const prompt=NOTE_PROMPT
           .replace(/\{PHASE\}/g,phase)
-          .replace(/\{PAIN\}/g,noPain?"0 — NO documented pain; write \'Patient denies pain this visit; pain assessed per MD orders\' instead of any pain rating or pain location":painLevel)
-          .replace(/\{PAINLOC\}/g,noPain?"none documented":painLoc)
+          .replace(/\{PAIN\}/g,painLevel)
+          .replace(/\{PAINLOC\}/g,painLoc)
           .replace(/\{PAINCHAR\}/g,getPainCharacter(poc.diagnoses))
           .replace(/\{PAINMED\}/g,painMed||"none")
           .replace(/\{PAINMED_PHRASE\}/g,painMedPhrase)
@@ -1238,7 +1236,7 @@ export default function App() {
                   poc.hasWound&&[`🩹 Wound${poc.woundStage?" St."+poc.woundStage:""}`,"#fee2e2","#991b1b"],
                   poc.isDiabetic&&["🩸 Diabetic","#fce7f3","#9d174d"],
                   poc.injectable?.found&&[`💉 ${poc.injectable.name||"Injectable"}`,"#fce7f3","#9d174d"],
-                  poc.hasPain===false?["🚫 No documented pain","#f3f4f6","#374151"]:[`⚡ Pain: ${getPainLocation("",poc.diagnoses)}${findPainMed(poc.medications)?" · "+findPainMed(poc.medications):" · no analgesic listed"}`,"#fef9c3","#854d0e"],
+                  [`⚡ Pain: ${getPainLocation("",poc.diagnoses)}${findPainMed(poc.medications)?" · "+findPainMed(poc.medications):" · no analgesic listed"}`,"#fef9c3","#854d0e"],
                   poc.hasCaregiver&&["👥 Caregiver","#d1fae5","#065f46"],
                   poc.hasParalysis&&["⚠️ Paralysis","#fee2e2","#991b1b"],
                   poc.hasVertigo&&["💫 Vertigo","#fef3c7","#92400e"],
