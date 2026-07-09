@@ -70,6 +70,13 @@ async function processMessage(gmail, messageRef) {
 
   log(`Processing email from ${msg.from} — "${msg.subject}" (PDF: ${msg.pdf.filename})`);
 
+  // ── LOCK IMMEDIATELY ────────────────────────────────────────────────────
+  // Generation takes several minutes; mark the email read + record it NOW so a
+  // second poll (or a duplicate worker) can't grab the same email and generate
+  // everything a second time. This is what prevents duplicate sends.
+  processed.add(msg.id);
+  await markRead(gmail, msg.id);
+
   // 3. Agency name from the PDF.
   const agencyName = await extractAgencyName(msg.pdf.buffer);
   log(`  Agency: ${agencyName || "(none found)"}`);
@@ -132,10 +139,8 @@ async function processMessage(gmail, messageRef) {
     log(`  Replied with ${pdfs.length} PDF(s).${skippedDates.length ? ` Skipped ${skippedDates.length} out-of-period date(s).` : ""}`);
   }
 
-  // 7. Mark read.
-  await markRead(gmail, msg.id);
-  processed.add(msg.id);
-  log(`  Marked read. Done.`);
+  // Already marked read + recorded up front (see LOCK above).
+  log(`  Done.`);
 }
 
 async function pollOnce() {
