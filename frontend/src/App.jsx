@@ -34,7 +34,8 @@ function pickVS() {
   const bp = line.match(/BP Sitting\s+([\d/]+)/);
   // Random blood sugar 90-210 mg/dL for diabetic patients
   const bs = Math.floor(100 + Math.random()*80); // 100-180 mg/dL, away from report thresholds
-  const o2 = Math.floor(94 + Math.random()*5); // 94-98%
+  const O2_LIST = [97,94,96,92,98,95,93,96,97,94,92,98,95,96,93,97,94,98,92,95,96,93,97,98,94,92,96,95,93,97,98,94,96,92,95,93,97,98,94,96,92,95,97,93,98,94,96,92,95,97];
+  const o2 = O2_LIST[Math.floor(Math.random()*O2_LIST.length)];
   return { temp: t?.[1]||"98.0", hr: hr?.[1]||"76", rr: rr?.[1]||"18", bp: bp?.[1]||"128/80", bs: String(bs), o2: String(o2) };
 }
 function parseVL(line) { return pickVS(); } // compat
@@ -43,6 +44,13 @@ function fmtDateDot(d) { if(!d)return""; return `${String(d.getMonth()+1).padSta
 function fmtTime(h,m,ap) { return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} ${ap}`; }
 
 // Injection site rotation — avoids left arm if restricted
+const BID_TEACHING = [
+  "Instructed patient/caregiver on signs and symptoms of hypoglycemia (shakiness, sweating, confusion, dizziness, rapid heartbeat) and to treat promptly with fast-acting sugar, rechecking blood sugar in 15 minutes.",
+  "Instructed patient/caregiver on signs and symptoms of hyperglycemia (increased thirst, frequent urination, fatigue, blurred vision) and to notify MD if blood sugar remains elevated.",
+  "Reinforced proper injection site care and rotation to prevent lipohypertrophy; instructed to inspect sites daily and report redness, swelling, or hard lumps.",
+  "Reviewed proper glucometer technique: wash hands before testing, rotate puncture sites, record all results, and bring the log to MD appointments.",
+  "Instructed on proper insulin storage: keep current pen at room temperature away from heat and sunlight, refrigerate unopened pens, and check expiration dates before use."
+];
 const INJ_SITES = ["abdomen RUQ","abdomen LUQ","abdomen RLQ","abdomen LLQ","right thigh","left thigh","right upper arm","left upper arm"];
 function getInjSite(index, leftArmRestricted) {
   const sites = leftArmRestricted ? INJ_SITES.filter(s => s !== "left upper arm") : INJ_SITES;
@@ -803,6 +811,9 @@ export default function App() {
 
     if (visits.length === 0) { setError("Add visit dates (calendar) or paste bulk dates/times."); return; }
 
+    // Notes must always run oldest → newest (past to future).
+    visits.sort((a, b) => a.date - b.date);
+
     // ── Certification-period gate ──────────────────────────────────────────
     // Visit dates outside the 485 cert period are NOT generated (compliance).
     // Skipped dates are recorded so the automation can report them by email.
@@ -834,6 +845,10 @@ export default function App() {
       if (!proceed) { return; }
     }
 
+    // BID with no injectable in the 485 → just generate without injection docs
+    // (useInjection = bidPatient && injectable.found already handles this).
+    // No blocking confirm here, so the headless automation isn't interrupted.
+
     setGenerating(true); setError(null); setNotes([]);
     try {
       const topics = poc.teachingTopics||[];
@@ -842,6 +857,9 @@ export default function App() {
       const prevTopics = [];
       const inj = poc.injectable || {};
       const useInjection = bidPatient && inj.found;
+      // Same-day visits (AM+PM) share topic + intervention text — only time/vitals/site differ
+      const dayCache = {};   // dateKey -> {topic, intervention}
+      const uniqueDays = [...new Set(visits.map(v=>v.dk))];
 
       for(let i=0;i<visits.length;i++){
         const v = visits[i];
@@ -852,9 +870,10 @@ export default function App() {
         const phase = getVisitPhase(i, total, dischargeOn, isLast);
         const painLevel = getPainLevelByVisit(i, total);
         const obs = getObsForVisit(i, 3, poc.isBedbound||false);
+        const dayIdx = uniqueDays.indexOf(dk);
         const topic = isLast ? "MEDICATION SAFETY & DISCHARGE PLANNING"
                     : (phase==="PRE_DISCHARGE" ? "DISCHARGE PLANNING & READINESS REVIEW"
-                    : (topics[i%topics.length]||"DISEASE PROCESS & MANAGEMENT"));
+                    : (dayCache[dk]?.topic || topics[dayIdx%topics.length] || "DISEASE PROCESS & MANAGEMENT"));
         setGenStatus(`Generating note ${i+1}/${total}: ${topic}...`);
 
         const diagStr=(poc.diagnoses||[]).slice(0,8).join(", ");
@@ -871,7 +890,8 @@ export default function App() {
         if (useInjection) {
           injSite = getInjSite(i, poc.leftArmRestricted);
           // Deterministic injection documentation — matched to 485 order style (guaranteed in every note)
-          injText = `SN prepared and administered ${inj.name} ${inj.dose} ${inj.route} at ${injSite} as ordered by MD, using aseptic technique with proper rotation of injection sites and proper disposal of sharps and contaminated materials. Injection site assessed before and after administration; no redness, swelling, bruising, skin breakdown, or adverse reaction noted.${poc.isDiabetic?" Blood sugar level monitored using patient's glucometer with aseptic technique, proper rotation of puncture sites, and proper sharps disposal; result recorded. Diabetic foot exam and care performed this visit.":""}`;
+          const bidTeach = poc.isDiabetic ? " " + BID_TEACHING[dayIdx % BID_TEACHING.length] : "";
+          injText = `SN prepared and administered ${inj.name} ${inj.dose} ${inj.route} at ${injSite} as ordered by MD, using aseptic technique with proper rotation of injection sites and proper disposal of sharps and contaminated materials. Injection site assessed before and after administration; no redness, swelling, bruising, skin breakdown, or adverse reaction noted.${poc.isDiabetic?" Blood sugar level monitored using patient's glucometer with aseptic technique, proper rotation of puncture sites, and proper sharps disposal; result recorded. Diabetic foot exam and care performed this visit.":""}${bidTeach}`;
           injInfo = `Injectable medication: ${inj.name} ${inj.dose} ${inj.route}, ${inj.frequency}. This visit's injection site: ${injSite}. NOTE: The injection documentation is inserted automatically — do NOT write your own injection sentence.`;
           injSentence = "";
         }
@@ -896,8 +916,14 @@ export default function App() {
           .replace("{INJECTION_INFO}",injInfo)
           .replace("{INJECTION_SENTENCE}",injSentence) + prevNote;
 
-        let intervention = await callAPI([{role:"user",content:prompt}],"",1100);
-        intervention = cleanNoteText(intervention);
+        let intervention;
+        if (dayCache[dk]?.intervention) {
+          // Same-day 2nd visit (PM): reuse the AM intervention — only time/vitals/injection site differ
+          intervention = dayCache[dk].intervention;
+        } else {
+          intervention = await callAPI([{role:"user",content:prompt}],"",1100);
+          intervention = cleanNoteText(intervention);
+        }
         // GUARANTEED injection documentation: insert after the opening block in every BID note
         if (useInjection && injText) {
           // Remove any AI-written injection sentence to avoid duplication
@@ -925,11 +951,19 @@ export default function App() {
             .replace(/\s{2,}/g," ").trim();
         }
 
+        if (!dayCache[dk]) dayCache[dk] = { topic, intervention };
+
         const vs = pickVS();
         setPreviewVS(vs);
+        // BID diabetic BS logic: AM (fasting) lower, PM higher — always non-reportable
+        if (poc.isDiabetic) {
+          const isAM = /am/i.test(v.timeIn||"") || (parseInt(v.timeIn)||9) < 12;
+          vs.bs = String(isAM ? Math.floor(110 + Math.random()*40)   // AM 110-150
+                              : Math.floor(135 + Math.random()*45)); // PM 135-180
+        }
         // Constipation patients: BM 2-3 days back (daily BM contradicts K59.04); others: 1 day
         const hasConstipation = (poc.diagnoses||[]).join(" ").toLowerCase().includes("constipation");
-        const bmDaysBack = hasConstipation ? (2 + (i % 2)) : 1;
+        const bmDaysBack = hasConstipation ? (2 + (dayIdx % 2)) : 1; // same-day AM/PM notes share the same Last BM
         const bmDate = new Date(date); bmDate.setDate(bmDate.getDate()-bmDaysBack);
         generated.push({
           date, dk, topic, intervention:intervention.trim(), vs, isLast,
@@ -990,9 +1024,10 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 4, ready: true,
+      version: 5, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
+      setBID: (v) => setBidPatient(!!v),           // "BID" in email → check BID Patient box
       setDates: (dateStrs) => {
         const ds = (dateStrs||[]).map(s => {
           const [m,d,y] = String(s).split("/").map(Number);
@@ -1010,19 +1045,33 @@ export default function App() {
       setVisitNurses: (map) => {
         setDateNurses(prev => ({ ...prev, ...(map||{}) }));
       },
+      // Full visit list, duplicates allowed (AM+PM on the same date). Goes
+      // through the bulk path so same-day pairs survive to generation.
+      // list: [{ date:"MM/DD/YYYY", timeIn:"HH:MM AM", timeOut:"HH:MM PM" }]
+      setVisits: (list) => {
+        const entries = (list||[]).map(v => {
+          const [m,d,y] = String(v.date).split("/").map(Number);
+          const dt = new Date(y, m-1, d); dt.setHours(12,0,0,0);
+          return { date: dt, timeIn: v.timeIn || "", timeOut: v.timeOut || "", raw: `${v.date} ${v.timeIn||""}-${v.timeOut||""}` };
+        }).filter(e => !isNaN(e.date))
+          .sort((a,b) => a.date - b.date || String(a.timeIn).localeCompare(String(b.timeIn)));
+        setBulkText(entries.map(e => e.raw).join("\n"));
+        setBulkEntries(entries);
+      },
       extract: () => { extract485(); },
       generate: () => { generateAll(); },
       getState: () => ({
         hasFile: !!file, extracting, generating, hasPoc: !!poc,
         agency: agencyName, nurse: snName, dates: dates.map(fmtDate),
-        visitNurses: dateNurses,
+        visitNurses: dateNurses, bid: bidPatient,
+        bulkCount: bulkEntries.length,
         certPeriod: { start: poc?.certPeriodStart || "", end: poc?.certPeriodEnd || "" },
         skippedDates,
         noteCount: notes.length, status: genStatus, error
       }),
       getNotesHTML: () => notes.map(noteToHTML)
     };
-  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, dateNurses, skippedDates, notes, genStatus, error]);
+  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, dateNurses, skippedDates, bidPatient, bulkEntries, notes, genStatus, error]);
 
   // Stage badge
   const stageBadge = poc ? {
