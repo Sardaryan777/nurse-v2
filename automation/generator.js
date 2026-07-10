@@ -140,17 +140,32 @@ export async function runGenerator(opts) {
     }
 
     // 7. Retrieve generated HTML (already oldest→newest) and render each to PDF.
+    // Each note MUST be exactly one A4 page. If a note (e.g. a BID note with
+    // injection text) is taller than the printable area, scale it down just
+    // enough to fit — "write it a little smaller to fit one page".
     const notesHTML = await page.evaluate(() => window.__automation.getNotesHTML());
     const pagePdfs = [];
+    // A4 @96dpi = 793.7 x 1122.5px; minus 8mm side + 10mm top/bottom margins.
+    const CONTENT_W = 733;   // printable width  (px)
+    const PRINTABLE_H = 1040; // printable height (px, with a small safety margin)
     for (const note of notesHTML) {
       const p = await browser.newPage();
+      await p.setViewport({ width: CONTENT_W, height: 1123, deviceScaleFactor: 1 });
       await p.setContent(note.html, { waitUntil: "networkidle0", timeout: 30000 });
+      // Don't let the whole column block jump to page 2 as one unit.
+      await p.addStyleTag({ content: ".cols,.left,.right{page-break-inside:auto!important;break-inside:auto!important}" });
+      // Measure the note's natural height and compute a shrink factor if needed.
+      const contentH = await p.evaluate(() => Math.ceil(document.body.scrollHeight));
+      const scale = contentH > PRINTABLE_H ? Math.max(0.55, PRINTABLE_H / contentH) : 1;
       const buffer = await p.pdf({
         format: "A4",
         printBackground: true,
-        margin: { top: "10mm", bottom: "10mm", left: "8mm", right: "8mm" }
+        margin: { top: "10mm", bottom: "10mm", left: "8mm", right: "8mm" },
+        scale,
+        pageRanges: "1"   // hard guarantee: never more than one page per note
       });
       await p.close();
+      if (scale < 1) console.log(`  Note scaled to ${(scale*100).toFixed(0)}% to fit one page (was ${contentH}px).`);
       pagePdfs.push(Buffer.from(buffer));
     }
 
