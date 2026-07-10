@@ -135,7 +135,7 @@ RULES:
 - injectable: scan medications AND nursing orders for any INJECTABLE medication (insulin, Lantus, Solostar, Humalog, Novolog, enoxaparin, Lovenox, B12, etc). If found, set found=true and extract: name (e.g. "Lantus Solostar Insulin"), dose (e.g. "30 units"), route ("subcutaneous"), frequency ("twice daily" or "once daily"), instruction (brief admin note). If no injectable, found=false.`;
 
 // ── NOTE GENERATION PROMPT ────────────────────────────────────────────────────
-const NOTE_PROMPT = `You are an experienced LVN writing a home health clinical note INTERVENTION section. Write real, concise documentation — NOT a textbook essay. 180-320 words total.
+const NOTE_PROMPT = `You are an experienced LVN writing a home health clinical note INTERVENTION section. Write real, concise documentation — NOT a textbook essay. {WORDS} words total.
 
 STRICT DATA RULE: Only mention diagnoses, medications, treatments, and findings that are listed below. Never invent inhalers, insulin, oxygen, wounds, catheters, diabetes, COPD, or any condition not in the data.
 
@@ -897,7 +897,12 @@ export default function App() {
         }
 
         const prevNote = prevTopics.length>0 ? ` Previously covered: ${prevTopics.slice(-3).join(", ")}. Use different phrasing.` : "";
+        // BID notes add a ~80-word injection paragraph, so the AI-written base is
+        // kept shorter to keep the TOTAL note the length of a normal (fits-one-page)
+        // note — full font size, just a little less text.
+        const wordTarget = useInjection ? "120-190" : "180-320";
         const prompt=NOTE_PROMPT
+          .replace(/\{WORDS\}/g,wordTarget)
           .replace(/\{PHASE\}/g,phase)
           .replace(/\{PAIN\}/g,painLevel)
           .replace(/\{PAINLOC\}/g,painLoc)
