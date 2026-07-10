@@ -90,6 +90,15 @@ function parseBulkInput(text) {
 const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAYS=["Su","Mo","Tu","We","Th","Fr","Sa"];
 
+// Strip a nurse's trailing credential(s) so only "Surname, First" remains.
+// "BABAKHANYAN, MELINA RN" -> "BABAKHANYAN, MELINA"; "Gayane Maneyan / LVN" -> "Gayane Maneyan"
+function stripNurseTitle(name) {
+  let n = String(name || "").trim();
+  let prev;
+  do { prev = n; n = n.replace(/[\s,\/\-]+(RN|LVN|LPN|BSN|MSN|NP|APRN|CNA|CHHA|HHA)\.?$/i, "").trim(); } while (n !== prev);
+  return n.replace(/[,\/\-\s]+$/, "").trim();
+}
+
 // Parse a certification-period date ("MM/DD/YYYY", "YYYY-MM-DD", "MM-DD-YYYY") -> Date | null
 function parseCertDate(s) {
   if (!s) return null;
@@ -699,7 +708,7 @@ ${bh(commSup)} Supervisor ${bh(false)} Pharmacist<br>
 Re: ${commRe}</div>
 
 <div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:3px;margin-top:2px;font-size:8.4pt">
-  <div style="flex:1"><b>SN NAME</b><br><span style="font-size:8.4pt">${snName||""}</span></div>
+  <div style="flex:1"><b>SN NAME</b><br><span style="font-size:8.4pt">${stripNurseTitle(snName)}</span></div>
   <div style="flex:1"><b>SN SIGNATURE</b><br><span style="border-bottom:1px solid #000;display:inline-block;width:80px">&nbsp;</span></div>
   <div style="flex:1;text-align:right"><b>NEXT MD APPOINTMENT</b><br><span style="font-size:8.4pt">As scheduled</span></div>
 </div>
