@@ -90,19 +90,27 @@ async function processMessage(gmail, messageRef) {
     return;
   }
 
-  const { dates, times, nurses } = buildScheduleInputs(visits);
-  log(`  Dates: ${dates.join(", ")}`);
+  // Keep the FULL visit list (AM+PM duplicates preserved for BID). Build a
+  // per-date nurse map, and a unique-date list for logging/reply text.
+  const nurses = {};
+  for (const v of visits) { if (v.nurseName) nurses[v.date] = v.nurseName; }
+  const dates = [...new Set(visits.map(v => v.date))];
+  log(`  Visits: ${visits.length} across ${dates.length} date(s): ${dates.join(", ")}`);
 
-  // 5. Drive the generator site -> PDFs (+ any dates skipped for cert period).
-  const { pdfs, skippedDates = [], certPeriod = { start: "", end: "" } } = await runGenerator({
+  // "BID" in the email SUBJECT → generate as a BID patient (AM/PM pairs share a note).
+  const bid = /\bBID\b/i.test(msg.subject || "");
+  if (bid) log(`  "BID" in subject → BID Patient mode ON.`);
+
+  // 5. Drive the generator site -> ONE merged PDF (+ any dates skipped for cert period).
+  const { pdfs, noteCount = 0, skippedDates = [], certPeriod = { start: "", end: "" } } = await runGenerator({
     url: GENERATOR_URL,
     pdfBuffer: msg.pdf.buffer,
     pdfFilename: msg.pdf.filename,
     agencyName,
     nurseName,
-    dates,
-    times,
-    nurses
+    visits,
+    nurses,
+    bid
   });
 
   const certLabel = (certPeriod.start || certPeriod.end)
@@ -125,10 +133,11 @@ async function processMessage(gmail, messageRef) {
     await replyWithAttachments(gmail, msg, { text, attachments: [] });
     log(`  Replied: all dates outside cert period (${certLabel}). No notes generated.`);
   } else {
+    // All notes are combined into ONE merged PDF (oldest → newest).
     let text =
-      `Hello,\n\nAttached are the ${pdfs.length} generated clinical note${pdfs.length > 1 ? "s" : ""} ` +
-      `for ${nurseLabel}${agencyName ? " (" + agencyName + ")" : ""}.\n\n` +
-      `Visit dates generated: ${dates.filter(d => !skippedDates.includes(d)).join(", ")}\n`;
+      `Hello,\n\nAttached is 1 combined PDF containing the ${noteCount} generated clinical note${noteCount > 1 ? "s" : ""} ` +
+      `for ${nurseLabel}${agencyName ? " (" + agencyName + ")" : ""}${bid ? " (BID patient)" : ""}.\n\n` +
+      `Visit dates generated (oldest → newest): ${dates.filter(d => !skippedDates.includes(d)).join(", ")}\n`;
     if (skippedDates.length) {
       text +=
         `\n⚠️ The following date(s) were NOT generated because they fall OUTSIDE the ` +
@@ -136,7 +145,7 @@ async function processMessage(gmail, messageRef) {
     }
     text += `\n— Automated Clinical Note Generator`;
     await replyWithAttachments(gmail, msg, { text, attachments: pdfs });
-    log(`  Replied with ${pdfs.length} PDF(s).${skippedDates.length ? ` Skipped ${skippedDates.length} out-of-period date(s).` : ""}`);
+    log(`  Replied with 1 merged PDF (${noteCount} note${noteCount > 1 ? "s" : ""}).${skippedDates.length ? ` Skipped ${skippedDates.length} out-of-period date(s).` : ""}`);
   }
 
   // Already marked read + recorded up front (see LOCK above).

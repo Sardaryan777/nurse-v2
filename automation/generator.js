@@ -6,6 +6,7 @@ import puppeteer from "puppeteer";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
+import { PDFDocument } from "pdf-lib";
 
 const launchOpts = {
   headless: "new",
@@ -62,13 +63,13 @@ async function waitForSettle(page, timeout) {
  * @param {string} opts.pdfFilename
  * @param {string} opts.agencyName
  * @param {string} opts.nurseName      default nurse (used when a date has no specific nurse)
- * @param {string[]} opts.dates        ["MM/DD/YYYY", ...]
- * @param {Object} opts.times          { "MM/DD/YYYY": {inH,inM,inAP,outH,outM,outAP} }
+ * @param {Array}  opts.visits         [{ date:"MM/DD/YYYY", timeIn:"HH:MM AM", timeOut:"HH:MM PM" }] — duplicates (AM+PM) allowed
  * @param {Object} [opts.nurses]       { "MM/DD/YYYY": "Nurse Name / LVN" } per-visit nurses
- * @returns {Promise<Array<{filename:string, buffer:Buffer}>>} generated PDFs
+ * @param {boolean} [opts.bid]         "BID" in email subject -> check BID Patient box
+ * @returns {Promise<{pdfs:Array,noteCount:number,skippedDates:string[],certPeriod:object}>}
  */
 export async function runGenerator(opts) {
-  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, dates, times, nurses = {} } = opts;
+  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, visits, nurses = {}, bid = false } = opts;
 
   // Write PDF to a temp file so the native file input can accept it.
   const tmpPdf = path.join(os.tmpdir(), `poc-${Date.now()}.pdf`);
@@ -94,16 +95,16 @@ export async function runGenerator(opts) {
       window.__automation.setNurse(n);
     }, agencyName || "", nurseName || "");
 
-    // 3. Select all dates + fill times + assign each visit its nurse.
-    await page.evaluate((ds, tmap, nmap) => {
-      window.__automation.setDates(ds);
-      window.__automation.setTimes(tmap);
+    // 3. Send the full visit list (AM+PM duplicates preserved) + nurses + BID.
+    await page.evaluate((vlist, nmap, bidFlag) => {
+      if (window.__automation.setVisits) window.__automation.setVisits(vlist);
       if (window.__automation.setVisitNurses) window.__automation.setVisitNurses(nmap);
-    }, dates, times, nurses);
+      if (window.__automation.setBID) window.__automation.setBID(bidFlag);
+    }, visits, nurses, bid);
 
     // Give React a moment to commit state.
     await sleep(500);
-    await waitForState(page, s => s.dates.length === dates.length, { timeout: 15000, label: "dates applied" });
+    await waitForState(page, s => s.bulkCount === visits.length, { timeout: 15000, label: "visits applied" });
 
     // 4. Extract the 485 (needed before generation can run).
     await page.evaluate(() => window.__automation.extract());
@@ -118,27 +119,29 @@ export async function runGenerator(opts) {
     // dates (~20s per note) with a 5-minute floor. Generation "settles" when it
     // stops running and either produced notes, skipped every date (all outside
     // the cert period), or reported an error.
-    const genTimeout = Math.max(300000, dates.length * 20000);
+    const genTimeout = Math.max(300000, visits.length * 20000);
     await page.evaluate(() => window.__automation.generate());
     const finalState = await waitForSettle(page, genTimeout);
 
     const skippedDates = finalState.skippedDates || [];
     const certPeriod = finalState.certPeriod || { start: "", end: "" };
 
+    const noteCount = finalState.noteCount || 0;
+
     // 6. If nothing was generated:
-    if (finalState.noteCount === 0) {
+    if (noteCount === 0) {
       // All dates outside the cert period is a valid outcome — report it back
       // so the worker can reply to the email explaining the mismatch.
       if (skippedDates.length > 0) {
         console.log(`No notes generated — all ${skippedDates.length} date(s) outside cert period ${certPeriod.start}–${certPeriod.end}.`);
-        return { pdfs: [], skippedDates, certPeriod };
+        return { pdfs: [], noteCount: 0, skippedDates, certPeriod };
       }
       throw new Error(finalState.error || "Generator produced no notes");
     }
 
-    // 7. Retrieve generated HTML and render each to a real PDF.
+    // 7. Retrieve generated HTML (already oldest→newest) and render each to PDF.
     const notesHTML = await page.evaluate(() => window.__automation.getNotesHTML());
-    const pdfs = [];
+    const pagePdfs = [];
     for (const note of notesHTML) {
       const p = await browser.newPage();
       await p.setContent(note.html, { waitUntil: "networkidle0", timeout: 30000 });
@@ -148,15 +151,28 @@ export async function runGenerator(opts) {
         margin: { top: "10mm", bottom: "10mm", left: "8mm", right: "8mm" }
       });
       await p.close();
-      pdfs.push({
-        filename: note.filename.replace(/\.html$/i, ".pdf"),
-        buffer: Buffer.from(buffer)
-      });
+      pagePdfs.push(Buffer.from(buffer));
     }
 
+    // 8. Merge ALL notes into a SINGLE PDF (one page per note, oldest→newest).
+    const merged = await PDFDocument.create();
+    for (const buf of pagePdfs) {
+      const src = await PDFDocument.load(buf);
+      const copied = await merged.copyPages(src, src.getPageIndices());
+      copied.forEach(pg => merged.addPage(pg));
+    }
+    const mergedBytes = await merged.save();
+
+    // Name the combined file after the patient.
+    const pm = (notesHTML[0]?.filename || "").match(/^Note-(.+?)-\d{2}-\d{2}-\d{4}/i);
+    const patientTag = pm ? pm[1] : "patient";
+    const mergedName = `Notes-${patientTag}-${noteCount}-visits.pdf`;
+
+    const pdfs = [{ filename: mergedName, buffer: Buffer.from(mergedBytes) }];
+
     if (skippedDates.length) console.log(`Skipped ${skippedDates.length} date(s) outside cert period: ${skippedDates.join(", ")}`);
-    console.log(`Rendered ${pdfs.length} PDF(s).`);
-    return { pdfs, skippedDates, certPeriod };
+    console.log(`Merged ${noteCount} note(s) into 1 PDF: ${mergedName}`);
+    return { pdfs, noteCount, skippedDates, certPeriod };
   } finally {
     await browser.close();
     fs.unlink(tmpPdf).catch(() => {});
