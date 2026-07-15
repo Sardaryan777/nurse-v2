@@ -34,7 +34,7 @@ function pickVS() {
   const bp = line.match(/BP Sitting\s+([\d/]+)/);
   // Random blood sugar 90-210 mg/dL for diabetic patients
   const bs = Math.floor(100 + Math.random()*80); // 100-180 mg/dL, away from report thresholds
-  const O2_LIST = [97,94,96,92,98,95,93,96,97,94,92,98,95,96,93,97,94,98,92,95,96,93,97,98,94,92,96,95,93,97,98,94,96,92,95,93,97,98,94,96,92,95,97,93,98,94,96,92,95,97];
+  const O2_LIST = [97,95,92,96,93,97,92,96,96,94,93,95,94,97,93,96,94,93,92,94,97,92,94,95,93,94,93,95,95,95,97,96,97,97,93,97,97,94,94,95,96,97,92,96,95,96,94,97,92,96,94,92,95,97,92,96,93,96,92,96,96,92,92,92,93,95,97,95,93,96,95,94,95,94,92,97,93,92,95,92,92,96,95,92,92,92,96,93,96,92,95,93,95,97,93,96,96,96,92,94];
   const o2 = O2_LIST[Math.floor(Math.random()*O2_LIST.length)];
   return { temp: t?.[1]||"98.0", hr: hr?.[1]||"76", rr: rr?.[1]||"18", bp: bp?.[1]||"128/80", bs: String(bs), o2: String(o2) };
 }
@@ -91,15 +91,13 @@ const MONTHS=["January","February","March","April","May","June","July","August",
 const DAYS=["Su","Mo","Tu","We","Th","Fr","Sa"];
 
 // Strip a nurse's trailing credential(s) so only "Surname, First" remains.
-// "BABAKHANYAN, MELINA RN" -> "BABAKHANYAN, MELINA"; "Gayane Maneyan / LVN" -> "Gayane Maneyan"
 function stripNurseTitle(name) {
   let n = String(name || "").trim();
   let prev;
   do { prev = n; n = n.replace(/[\s,\/\-]+(RN|LVN|LPN|BSN|MSN|NP|APRN|CNA|CHHA|HHA)\.?$/i, "").trim(); } while (n !== prev);
   return n.replace(/[,\/\-\s]+$/, "").trim();
 }
-
-// Parse a certification-period date ("MM/DD/YYYY", "YYYY-MM-DD", "MM-DD-YYYY") -> Date | null
+// Parse a cert-period date ("MM/DD/YYYY", "YYYY-MM-DD", "MM-DD-YYYY") -> Date | null
 function parseCertDate(s) {
   if (!s) return null;
   s = String(s).trim();
@@ -119,7 +117,7 @@ Detect stage automatically:
 - If "Discharge" → stage = "DISCHARGE"
 
 Return this exact structure:
-{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
+{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"sobExertion":"","cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
 
 RULES:
 - stage: exactly "SOC", "RECERT", or "DISCHARGE"  
@@ -138,6 +136,7 @@ RULES:
 - hasWalker/hasCane/hasWheelchair: true ONLY if that device is in DME/supplies or activities permitted. Do NOT default to true
 - homeboundFlags: read the 485's homebound statement and set each flag from it: limitedEndurance, limitedStrength, assistADL (needs assistance for activities), unevenSurfaces, confusion (only if confusion listed as homebound reason), unableToLeaveAlone, poorCoordination, taxingEffort
 - mentalStatus: set each flag true ONLY if documented in Mental Status section (item 19) or medical summary. depressedControlled=true ONLY if depression documented AND a psychiatric medication exists in med list
+- deficits.sobExertion: when SOB is documented, extract the exertion level EXACTLY as the 485 states it: "rest", "minimal", or "moderate" (e.g. "SOB w/mod exertion" → "moderate"). NEVER change the documented level. If SOB documented without a level, use "moderate"
 - deficits: set each flag true ONLY if that finding is explicitly documented as a CURRENT finding. IGNORE symptoms that appear only in report-to-MD parameters, warning lists, or 'notify MD if...' instructions (e.g. 'report blurred vision' does NOT mean the patient has poor vision) in this 485/POC (functional limitations, medical summary, diagnoses, item 99). Do NOT assume or default any deficit to true. Examples: poorVision only if impaired/blurred vision documented; hoh only if HOH/hearing impairment; sob only if SOB/dyspnea; urinaryIncontinence/bowelIncontinence only if incontinence documented; edema only if edema documented; stiffJoints/weakness/limitedROM/unsteadyBalance only if documented
 - isDiabetic: true if diabetes, insulin, blood sugar monitoring, or diabetic care mentioned
 - leftArmRestricted: true if left mastectomy, left-arm restriction, or "no BP/blood draw left arm" mentioned
@@ -159,6 +158,10 @@ VISIT CONTEXT:
 - Medications (ONLY these): {MEDS}
 - Visit-specific observations to include: {OBS}
 - Respiratory medication present: {HAS_RESP}
+- Assistive device: {DEVICE}  (CONSISTENCY RULE: mention ONLY this device in ALL narrative — never any other device; if "none", never mention any ambulation device)
+- Edema: {EDEMA}  (CONSISTENCY RULE: if "none documented", NEVER mention edema anywhere in the note)
+- SOB level: {SOBLEVEL}  (CONSISTENCY RULE: use this EXACT exertion level in narrative — never change severity)
+- Mental status: {MENTAL}  (CONSISTENCY RULE: narrative must match these exact findings — do not add or drop alert/oriented)
 - Mobility status: {MOBILITY}  (if BEDBOUND: NEVER write that patient stood, walked, ambulated, or used a walker/cane — patient is on complete bedrest; pain wording must use "increased with repositioning and turning" instead of standing/ambulation)
 {INJECTION_INFO}
 
@@ -209,19 +212,14 @@ function getVisitPhase(index, totalVisits, dischargeOn, isLast) {
 
 // Skilled observation bank — rotate for visit-specific detail
 const SKILLED_OBS = [
-  "Patient ambulated slowly with walker from living room to chair with supervision.",
   "Patient required verbal cueing for safe transfer technique.",
   "Patient denied chest pain, dizziness, or acute shortness of breath at rest.",
-  "Mild shortness of breath noted with exertion, relieved by rest.",
-  "Bilateral lower extremity non-pitting edema remained present without acute worsening.",
   "Patient demonstrated improved medication recall with caregiver assistance.",
   "Patient required reinforcement of instructions due to forgetfulness.",
   "No new open areas or skin breakdown observed or reported.",
   "Appetite fair; patient encouraged to maintain prescribed diet.",
   "Patient reported no falls since prior visit.",
-  "Patient used assistive device appropriately after cueing.",
-  "Patient alert and oriented with forgetfulness and intermittent confusion noted.",
-  "Lung sounds clear bilaterally; respirations even and unlabored at rest.",
+  "Lung sounds monitored; respirations even and unlabored at rest.",
   "Patient tolerated visit without acute distress."
 ];
 const SKILLED_OBS_BEDBOUND = [
@@ -240,10 +238,39 @@ const SKILLED_OBS_BEDBOUND = [
   "Incontinence care reviewed; perineal skin observed intact aside from documented wounds.",
   "Patient tolerated visit without acute distress."
 ];
-function getObsForVisit(index, count=3, isBedbound=false) {
-  const bank = isBedbound ? SKILLED_OBS_BEDBOUND : SKILLED_OBS;
+function getObsForVisit(index, count=3, poc={}) {
+  const df = poc.deficits||{};
+  const ms = poc.mentalStatus||{};
+  const device = getAssistiveDevice(poc);
+  const pool = [...(poc.isBedbound ? SKILLED_OBS_BEDBOUND : SKILLED_OBS)];
+  // RULE 1: device observations use THE documented device only — never invent one
+  if (device && !poc.isBedbound) {
+    pool.unshift(`Patient ambulated slowly with ${device} with supervision; reminded to use the ${device} consistently for all ambulation.`);
+    pool.push(`Patient used the ${device} appropriately after cueing; fall precautions reinforced.`);
+  }
+  // RULE 2: edema observation ONLY when 485 documents edema; progression wording by visit position
+  if (df.edema && !poc.isBedbound) {
+    pool.push(index === 0
+      ? "Bilateral lower extremity non-pitting edema was noted during the current visit."
+      : "Bilateral lower extremity non-pitting edema remained present without acute worsening.");
+  }
+  // RULE 3: SOB observation matches the documented exertion level exactly
+  if (df.sob) {
+    const lvl = df.sobExertion || "moderate";
+    pool.push(`Mild shortness of breath noted with ${lvl} exertion, relieved by rest.`);
+  }
+  // RULE 4: mental-status observation built from the SAME normalized data as the checkboxes
+  const mParts = [];
+  if (ms.alert !== false) mParts.push("alert");
+  if (ms.oriented !== false) mParts.push("oriented");
+  let mLine = mParts.length ? `Patient was ${mParts.join(" and ")} during the visit` : "Patient's mental status observed during the visit";
+  const mExtra = [];
+  if (ms.forgetful) mExtra.push("intermittent forgetfulness");
+  if (ms.confusedAtTimes) mExtra.push("confusion at times");
+  if (mExtra.length) mLine += `, with ${mExtra.join(" and ")} requiring repetition and cueing`;
+  pool.push(mLine + ".");
   const out = [];
-  for (let i = 0; i < count; i++) out.push(bank[(index*3 + i) % bank.length]);
+  for (let i = 0; i < count; i++) out.push(pool[(index*3 + i) % pool.length]);
   return out;
 }
 
@@ -298,6 +325,15 @@ function getPainLocation(topic, diagnoses) {
   if(hasBack) return "lower back";
   return "lower back";
 }
+// RULE 1: Single normalized assistive device — 485 DME/Activities Permitted is the source
+function getAssistiveDevice(poc) {
+  if (poc.isBedbound) return null;            // bedbound: no ambulation device
+  if (poc.hasWalker) return "walker";          // primary ambulation device
+  if (poc.hasCane) return "cane";
+  if (poc.hasWheelchair) return "wheelchair";
+  return null;                                  // none documented → never invent one
+}
+
 // Pain character from diagnoses: sciatica/radiculopathy → radiating; else dull
 // Strip negated findings ("without X", "w/o X") so they never match as positive
 function stripNegated(text) {
@@ -614,7 +650,7 @@ ${bh(poc.hasDysphagia||false)}Dysphagia ${bh(df.deaf||false)}Deaf ${bh(df.hoh||f
 ${bh(poc.proneToAspiration||false)}Prone to aspiration</div>
 
 <div class="sec"><div class="st">RESPIRATORY: </div>
-${bh(df.sob||false)}SOB ${bh(false)}Rest${bh(df.sob||false)}min. exer ${bh(false)}<br>
+${bh(df.sob||false)}SOB ${bh(df.sob&&df.sobExertion==="rest")}Rest${bh(df.sob&&df.sobExertion==="minimal")}min. exer ${bh(df.sob&&(df.sobExertion==="moderate"||!df.sobExertion))}<br>
 mod. exertion ${bh(false)}Cough ${bh(false)}Productive ${bh(false)}Non-productive ${bh(false)} Sputum Color:<span style="border-bottom:1px solid #000;display:inline-block;width:16px"></span> ${bh(false)}Amount<br>
 Lung Sound: <u>${poc.lungSounds||"clear"}</u><br>
 O2sat <u>${poc.o2Sat||vs.o2||"96"}%</u> LPM &nbsp;Other</div>
@@ -741,8 +777,8 @@ export default function App() {
   const [snName,     setSnName]     = useState("");
   const [dates,      setDates]      = useState([]);
   const [dateTimes,  setDateTimes]  = useState({});
-  const [dateNurses, setDateNurses] = useState({}); // { "MM/DD/YYYY": "Nurse Name / LVN" } per-visit nurse override
-  const [skippedDates, setSkippedDates] = useState([]); // visit dates outside the cert period (not generated)
+  const [dateNurses, setDateNurses] = useState({});
+  const [skippedDates, setSkippedDates] = useState([]);
   const [previewVS,  setPreviewVS]  = useState(()=>pickVS());
   const [bidPatient, setBidPatient] = useState(false);
   const [autoAMPM,   setAutoAMPM]   = useState(false);
@@ -820,12 +856,10 @@ export default function App() {
 
     if (visits.length === 0) { setError("Add visit dates (calendar) or paste bulk dates/times."); return; }
 
-    // Notes must always run oldest → newest (past to future).
+    // Notes must always run oldest → newest.
     visits.sort((a, b) => a.date - b.date);
 
-    // ── Certification-period gate ──────────────────────────────────────────
-    // Visit dates outside the 485 cert period are NOT generated (compliance).
-    // Skipped dates are recorded so the automation can report them by email.
+    // ── Certification-period gate: skip dates outside the 485 cert period ──
     const certStart = parseCertDate(poc.certPeriodStart);
     const certEnd   = parseCertDate(poc.certPeriodEnd);
     let skipped = [];
@@ -841,22 +875,17 @@ export default function App() {
     }
     setSkippedDates(skipped);
     if (visits.length === 0) {
-      setNotes([]);
-      setGenStatus("");
+      setNotes([]); setGenStatus("");
       setError(`No notes generated — all visit date(s) fall outside the 485 certification period (${poc.certPeriodStart || "?"} – ${poc.certPeriodEnd || "?"}). Wrong 485 or wrong dates?`);
       return;
     }
 
-    // Warn if any visit is missing a time
+    // Missing-time warning only applies to manual calendar use (never blocks automation/bulk).
     const missingTimes = visits.filter(v => !v.timeIn || !v.timeOut);
     if (missingTimes.length > 0 && bulkEntries.length === 0 && !autoAMPM) {
-      const proceed = window.confirm(`${missingTimes.length} visit(s) have no Time In/Out set. Generate anyway with blank times?\n\nTip: Set times using the time pickers under each date, OR use the Bulk box, OR check Auto-create AM/PM.`);
+      const proceed = window.confirm(`${missingTimes.length} visit(s) have no Time In/Out set. Generate anyway with blank times?`);
       if (!proceed) { return; }
     }
-
-    // BID with no injectable in the 485 → just generate without injection docs
-    // (useInjection = bidPatient && injectable.found already handles this).
-    // No blocking confirm here, so the headless automation isn't interrupted.
 
     setGenerating(true); setError(null); setNotes([]);
     try {
@@ -878,8 +907,8 @@ export default function App() {
         const isLast = dischargeOn && (i === visits.length-1);
         const phase = getVisitPhase(i, total, dischargeOn, isLast);
         const painLevel = getPainLevelByVisit(i, total);
-        const obs = getObsForVisit(i, 3, poc.isBedbound||false);
         const dayIdx = uniqueDays.indexOf(dk);
+        const obs = getObsForVisit(dayIdx, 3, poc);
         const topic = isLast ? "MEDICATION SAFETY & DISCHARGE PLANNING"
                     : (phase==="PRE_DISCHARGE" ? "DISCHARGE PLANNING & READINESS REVIEW"
                     : (dayCache[dk]?.topic || topics[dayIdx%topics.length] || "DISEASE PROCESS & MANAGEMENT"));
@@ -893,6 +922,13 @@ export default function App() {
         const painMed = findPainMed(poc.medications);
         const painMedPhrase = painMed ? (painMed + " as ordered") : "current pain management measures per MD orders";
         const hasResp = hasRespiratoryMed(poc.medications) ? "YES" : "NO";
+        // Rule 1-4 normalized values — same data drives checkboxes AND narrative
+        const device = getAssistiveDevice(poc) || "none";
+        const dfx = poc.deficits||{};
+        const edemaStatus = dfx.edema ? "non-pitting BLE" + (dayIdx===0?" (first documented this visit — say 'was noted', not 'remained')":" (documented previously — 'remained present' is allowed)") : "none documented";
+        const sobLevel = dfx.sob ? (dfx.sobExertion||"moderate")+" exertion" : "not documented";
+        const msx = poc.mentalStatus||{};
+        const mentalStr = [msx.alert!==false?"alert":null, msx.oriented!==false?"oriented":null, msx.forgetful?"forgetful":null, msx.confusedAtTimes?"confused at times":null, msx.anxious?"anxious at times":null].filter(Boolean).join(", ");
 
         // Injection details for this visit
         let injInfo = "", injSentence = "", injSite = "", injText = "";
@@ -906,9 +942,8 @@ export default function App() {
         }
 
         const prevNote = prevTopics.length>0 ? ` Previously covered: ${prevTopics.slice(-3).join(", ")}. Use different phrasing.` : "";
-        // BID notes add a ~80-word injection paragraph, so the AI-written base is
-        // kept shorter to keep the TOTAL note the length of a normal (fits-one-page)
-        // note — full font size, just a little less text.
+        // BID notes add a ~80-word injection paragraph, so keep the AI base shorter
+        // → total ≈ a normal note (fits one page at full font size).
         const wordTarget = useInjection ? "120-190" : "180-320";
         const prompt=NOTE_PROMPT
           .replace(/\{WORDS\}/g,wordTarget)
@@ -922,6 +957,10 @@ export default function App() {
           .replace(/\{SUBJECT\}/g,subject)
           .replace(/\{HAS_RESP\}/g,hasResp)
           .replace(/\{MOBILITY\}/g,poc.isBedbound?"BEDBOUND":"AMBULATORY")
+          .replace(/\{DEVICE\}/g,device)
+          .replace(/\{EDEMA\}/g,edemaStatus)
+          .replace(/\{SOBLEVEL\}/g,sobLevel)
+          .replace(/\{MENTAL\}/g,mentalStr||"not documented")
           .replace("{TOPIC}",topic)
           .replace("{DIAGNOSES}",diagStr)
           .replace("{NUM}",i+1).replace("{TOTAL}",total)
@@ -1038,30 +1077,10 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 5, ready: true,
+      version: 6, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
-      setBID: (v) => setBidPatient(!!v),           // "BID" in email → check BID Patient box
-      setDates: (dateStrs) => {
-        const ds = (dateStrs||[]).map(s => {
-          const [m,d,y] = String(s).split("/").map(Number);
-          const dt = new Date(y, m-1, d); dt.setHours(12,0,0,0); return dt;
-        }).filter(d=>!isNaN(d)).sort((a,b)=>a-b);
-        setDates(ds);
-      },
-      setTimes: (map) => {
-        setDateTimes(prev => {
-          const next = { ...prev };
-          for (const k of Object.keys(map||{})) next[k] = { ...(next[k]||{}), ...map[k] };
-          return next;
-        });
-      },
-      setVisitNurses: (map) => {
-        setDateNurses(prev => ({ ...prev, ...(map||{}) }));
-      },
-      // Full visit list, duplicates allowed (AM+PM on the same date). Goes
-      // through the bulk path so same-day pairs survive to generation.
-      // list: [{ date:"MM/DD/YYYY", timeIn:"HH:MM AM", timeOut:"HH:MM PM" }]
+      setBID: (v) => setBidPatient(!!v),
       setVisits: (list) => {
         const entries = (list||[]).map(v => {
           const [m,d,y] = String(v.date).split("/").map(Number);
@@ -1072,16 +1091,15 @@ export default function App() {
         setBulkText(entries.map(e => e.raw).join("\n"));
         setBulkEntries(entries);
       },
+      setVisitNurses: (map) => { setDateNurses(prev => ({ ...prev, ...(map||{}) })); },
       extract: () => { extract485(); },
       generate: () => { generateAll(); },
       getState: () => ({
         hasFile: !!file, extracting, generating, hasPoc: !!poc,
         agency: agencyName, nurse: snName, dates: dates.map(fmtDate),
-        visitNurses: dateNurses, bid: bidPatient,
-        bulkCount: bulkEntries.length,
+        visitNurses: dateNurses, bid: bidPatient, bulkCount: bulkEntries.length,
         certPeriod: { start: poc?.certPeriodStart || "", end: poc?.certPeriodEnd || "" },
-        skippedDates,
-        noteCount: notes.length, status: genStatus, error
+        skippedDates, noteCount: notes.length, status: genStatus, error
       }),
       getNotesHTML: () => notes.map(noteToHTML)
     };
