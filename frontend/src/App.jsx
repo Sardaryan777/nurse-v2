@@ -44,6 +44,17 @@ function fmtDateDot(d) { if(!d)return""; return `${String(d.getMonth()+1).padSta
 function fmtTime(h,m,ap) { return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} ${ap}`; }
 
 // Injection site rotation — avoids left arm if restricted
+const WOUND_TEACHING = [
+  ["INFECTION SIGNS & SYMPTOMS", "signs and symptoms of wound infection — increased drainage, foul odor, fever, spreading redness, swelling, warmth, or increased pain — and reporting them promptly to the physician/home health agency"],
+  ["KEEPING DRESSING CLEAN & DRY", "keeping the dressing clean, dry, and intact between visits, and notifying the nurse if the dressing becomes wet, soiled, or loosened"],
+  ["PRESSURE RELIEF & REPOSITIONING", "pressure relief and repositioning at least every 2 hours, offloading the affected area, and protecting bony prominences to support wound healing"],
+  ["NUTRITION & HYDRATION FOR HEALING", "the role of adequate protein intake and hydration in wound healing, and maintaining the prescribed diet to support tissue repair"],
+  ["BLOOD SUGAR CONTROL & WOUND HEALING", "the effect of blood sugar control on wound healing, since elevated glucose slows tissue repair and increases infection risk"],
+  ["PAIN MANAGEMENT WITH WOUND CARE", "pain management before and during dressing changes, using ordered comfort measures and reporting pain not controlled by current measures"],
+  ["WHEN TO NOTIFY PHYSICIAN", "when to notify the physician: wound deterioration, new drainage or odor, bleeding, fever, increased pain, or any change in wound appearance"],
+  ["SKIN INSPECTION & PROTECTION", "daily inspection of surrounding skin, avoiding scratching or picking at the wound, and safe disposal of soiled dressings"],
+  ["HAND HYGIENE & INFECTION CONTROL", "hand hygiene before and after any contact with the wound or dressing, and clean technique principles to prevent contamination"]
+];
 const BID_TEACHING = [
   "Instructed patient/caregiver on signs and symptoms of hypoglycemia (shakiness, sweating, confusion, dizziness, rapid heartbeat) and to treat promptly with fast-acting sugar, rechecking blood sugar in 15 minutes.",
   "Instructed patient/caregiver on signs and symptoms of hyperglycemia (increased thirst, frequent urination, fatigue, blurred vision) and to notify MD if blood sugar remains elevated.",
@@ -61,7 +72,18 @@ function getInjSite(index, leftArmRestricted) {
 function parseBulkInput(text) {
   const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
   const entries = [];
+  let currentNurse = "";   // grouped "Nurse: X" header carries forward until the next header
   for (const line of lines) {
+    // Grouped nurse header line: "Nurse: Anna Petrosyan" (no date on the line)
+    const headerMatch = line.match(/^nurse\s*[:\-]\s*(.+)$/i);
+    if (headerMatch && !/\d{1,2}[\/\.]\d{1,2}[\/\.]\d{2,4}/.test(line)) {
+      currentNurse = headerMatch[1].trim();
+      continue;
+    }
+    // Inline nurse on a date line: "04/16/2026 10:00-10:45 Nurse: Anna Petrosyan"
+    let inlineNurse = "";
+    const inlineMatch = line.match(/nurse\s*[:\-]\s*(.+)$/i);
+    if (inlineMatch) inlineNurse = inlineMatch[1].trim();
     // Match MM/DD/YYYY then two times. Times may be 24hr (07:00) or 12hr with am/pm (08:00 pm)
     const m = line.match(/(\d{1,2}[\/\.]\d{1,2}[\/\.]\d{2,4})\s+(\d{1,2}:\d{2}(?:\s*[apAP][mM])?)\s*(?:-|–|—|to)\s*(\d{1,2}:\d{2}(?:\s*[apAP][mM])?)/i);
     if (m) {
@@ -71,7 +93,7 @@ function parseBulkInput(text) {
       dateObj.setHours(12,0,0,0);
       // Normalize times: trim, uppercase am/pm
       const normTime = t => t.trim().replace(/\s*([apAP])[mM]/, (x,a)=>" "+a.toUpperCase()+"M");
-      entries.push({ date: dateObj, timeIn: normTime(m[2]), timeOut: normTime(m[3]), raw: line });
+      entries.push({ date: dateObj, timeIn: normTime(m[2]), timeOut: normTime(m[3]), nurseName: inlineNurse || currentNurse, raw: line });
     } else {
       // Try just a date with no time
       const dm = line.match(/(\d{1,2}[\/\.]\d{1,2}[\/\.]\d{2,4})/);
@@ -80,7 +102,7 @@ function parseBulkInput(text) {
         let yr = dp[2]; if (yr.length === 2) yr = "20" + yr;
         const dateObj = new Date(parseInt(yr), parseInt(dp[0])-1, parseInt(dp[1]));
         dateObj.setHours(12,0,0,0);
-        entries.push({ date: dateObj, timeIn: "", timeOut: "", raw: line });
+        entries.push({ date: dateObj, timeIn: "", timeOut: "", nurseName: inlineNurse || currentNurse, raw: line });
       }
     }
   }
@@ -117,7 +139,7 @@ Detect stage automatically:
 - If "Discharge" → stage = "DISCHARGE"
 
 Return this exact structure:
-{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"sobExertion":"","cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
+{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"sobExertion":"","cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","wounds":[],"woundCareOrder":"","cleansingSolution":"","dressingType":"","woundSupplies":"","woundFrequency":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
 
 RULES:
 - stage: exactly "SOC", "RECERT", or "DISCHARGE"  
@@ -127,6 +149,9 @@ RULES:
 - hasPleurX: true if PleurX catheter mentioned in document\n- hasParalysis: true ONLY if paralysis, paraplegia, hemiplegia, or quadriplegia is explicitly diagnosed. Default false — do NOT assume paralysis from weakness or difficulty walking\n- hasCaregiver: true if PCG, caregiver, family member, or caregiver involvement is documented in the POC. Default false
 - isBedbound: true if Complete Bedrest, bedbound, or bedrest is marked in Activities Permitted or functional limitations
 - hasWound: true if pressure ulcer, wound, decubitus, or wound care orders present. woundDesc: brief location description (e.g. "coccyx and right hip pressure ulcers"). woundStage: stage if stated (e.g. "1")
+- wounds: array of wound objects, one per distinct wound site found ANYWHERE in the document (diagnoses, orders, 487, supplies, goals). Each: {"location":"","type":"","stage":"","size":"","drainage":"","odor":"","periwound":"","woundBed":"","careOrder":""}. Search terms: wound, ulcer, pressure ulcer, decubitus, stage, drainage, dressing, cleanse, NS/normal saline, gauze, foam, calcium alginate, hydrocolloid, silver, xeroform, Santyl, Betadine, Kerlix, compression, offloading, diabetic/venous/arterial/surgical ulcer. Fill each field ONLY with what the document states VERBATIM — leave "" when not documented. NEVER invent measurements, stages, drainage amounts, odor, or dressing types
+- woundCareOrder: the EXACT wound care order text from the document (e.g. "Clean with NS, pat dry, apply triple antibiotic cream, secure with 4x4"). "" if none found
+- cleansingSolution/dressingType/woundSupplies/woundFrequency: extracted verbatim from orders/supplies; "" when not stated
 - hasContracture: true if contracture diagnosis or functional limitation listed
 - hasDysphagia: true if dysphagia diagnosed. proneToAspiration: true if dysphagia or aspiration risk documented
 - lungSounds: "clear" unless 485 documents wheezes/crackles/diminished (then use that word, e.g. "anterior wheezes")
@@ -140,7 +165,7 @@ RULES:
 - deficits: set each flag true ONLY if that finding is explicitly documented as a CURRENT finding. IGNORE symptoms that appear only in report-to-MD parameters, warning lists, or 'notify MD if...' instructions (e.g. 'report blurred vision' does NOT mean the patient has poor vision) in this 485/POC (functional limitations, medical summary, diagnoses, item 99). Do NOT assume or default any deficit to true. Examples: poorVision only if impaired/blurred vision documented; hoh only if HOH/hearing impairment; sob only if SOB/dyspnea; urinaryIncontinence/bowelIncontinence only if incontinence documented; edema only if edema documented; stiffJoints/weakness/limitedROM/unsteadyBalance only if documented
 - isDiabetic: true if diabetes, insulin, blood sugar monitoring, or diabetic care mentioned
 - leftArmRestricted: true if left mastectomy, left-arm restriction, or "no BP/blood draw left arm" mentioned
-- injectable: scan medications AND nursing orders for any INJECTABLE medication (insulin, Lantus, Solostar, Humalog, Novolog, enoxaparin, Lovenox, B12, etc). If found, set found=true and extract: name (e.g. "Lantus Solostar Insulin"), dose (e.g. "30 units"), route ("subcutaneous"), frequency ("twice daily" or "once daily"), instruction (brief admin note). If no injectable, found=false.`;
+- injectable: search the ENTIRE 485/487 document — medication list, nursing orders, treatment orders, goals, and any other section — for any INJECTABLE medication (insulin, Lantus, Solostar, Humalog, Novolog, enoxaparin, Lovenox, B12, etc). If found, set found=true and extract: name (e.g. "Lantus Solostar Insulin"), dose (e.g. "30 units"), route ("subcutaneous"), frequency ("twice daily" or "once daily"), instruction (brief admin note). If no injectable, found=false.`;
 
 // ── NOTE GENERATION PROMPT ────────────────────────────────────────────────────
 const NOTE_PROMPT = `You are an experienced LVN writing a home health clinical note INTERVENTION section. Write real, concise documentation — NOT a textbook essay. {WORDS} words total.
@@ -183,6 +208,34 @@ BLOCK 3 — Teaching (4-6 sentences) on {TOPIC}, individualized to the patient's
 BLOCK 4 — MD/911 (1-2 sentences): when to notify MD (worsening pain, uncontrolled BP, new dizziness, falls, signs of infection, change in condition) and call 911 (chest pain, severe breathing difficulty, stroke symptoms, loss of consciousness, serious fall injury).
 
 RULES: Never write his/her, he/she, s/he, their, or [placeholders]. Never say "evaluation and assessment of all body systems" (RN-level) — use LVN wording (observed, monitored, reviewed, reinforced). Vary wording from prior notes. IF PHASE IS FINAL_DISCHARGE: do NOT write "continues to require skilled observation", "continued skilled teaching", "needs further assessment", "requires follow-up teaching", or "continue plan of care" — instead state that skilled nursing goals have been met / maximum benefit achieved and patient is appropriate for discharge. Return ONLY the paragraph text, no block labels.`;
+
+// ── WOUND NOTE PROMPT ─────────────────────────────────────────────────────────
+const WOUND_NOTE_PROMPT = `You are an experienced LVN writing a home health WOUND CARE visit note INTERVENTION section. Write real, concise skilled documentation — 200-330 words.
+
+STRICT DATA RULE: Only document wound details listed below. NEVER invent wound measurements, stages, drainage amounts, odor, wound bed findings, dressing types, or locations that are not provided. If a detail is blank/unknown, use conservative wording ("per physician order", "per plan of care").
+
+VISIT CONTEXT:
+- Wound teaching topic this visit: {WTOPIC}
+- Wound(s) — document EACH separately, never merge: {WOUNDS}
+- Wound care order (follow EXACTLY, never substitute solutions/dressings): {WORDER}
+- Dressing type: {WDRESSING}   (if "not specified": write "dressing changed per physician order and agency protocol" — do NOT invent one)
+- Visit phase: {PHASE}  |  Note #{NUM} of {TOTAL}
+- Diagnoses (ONLY these): {DIAGNOSES}
+- Pain: {PAIN}/10 {PAINLOC}
+- Subject: {SUBJECT}
+- Mobility: {MOBILITY}  |  Assistive device: {DEVICE}
+- Mental status: {MENTAL}
+{INJECTION_INFO}
+
+Write ONE flowing intervention with this structure:
+1. Arrival block: "SN arrived for scheduled skilled nursing visit. Patient identified by two identifiers. Vital signs checked and recorded. Patient assessed for pain, respiratory status, cardiovascular status, safety, skin integrity, and homebound status. Hand hygiene performed before and after patient care."
+2. Wound assessment: "SN assessed wound site per physician order. Old dressing was removed using clean technique. Wound was assessed for drainage, odor, redness, swelling, warmth, periwound condition, and signs/symptoms of infection." Add specifics ONLY from the wound data above; if fields are blank use: "No acute complication was reported during this visit."
+3. Wound care performed: follow the care order EXACTLY (e.g. cleansing solution, application, securing). Base: "Wound care was performed per plan of care. Wound was cleansed as ordered, periwound skin protected, and new dressing applied. Patient tolerated wound care procedure without adverse reaction." If multiple wounds: "Wound #1: [location]... Wound #2: [location]..." separately.
+4. {INJECTION_SENTENCE}
+5. Teaching (3-5 sentences) on {WTOPIC}, individualized to the patient's actual diagnoses.
+6. Close: homebound status + "Plan is to continue skilled nursing visits for wound care, assessment, and teaching per plan of care." (unless FINAL_DISCHARGE phase — then goals met / appropriate for discharge wording).
+
+RULES: LVN wording only (observed, monitored, performed, reinforced). Never his/her, s/he, their, [placeholders]. Vary sentence structure between notes. IF PHASE IS FINAL_DISCHARGE: include final wound assessment summary, do NOT write "continue plan of care" — write skilled nursing goals met / maximum benefit achieved and appropriate for discharge. Return ONLY the paragraph text.`;
 
 // ── VARIATION PROMPT ──────────────────────────────────────────────────────────
 const VARIATION_PROMPT = `Rewrite this nursing intervention paragraph with COMPLETELY DIFFERENT wording, sentence structure, and phrasing. Keep ALL the same clinical meaning and actions. Use synonyms throughout. Change sentence order. Must sound like a different nurse wrote it on a different day. Return ONLY the rewritten text, nothing else.
@@ -777,8 +830,7 @@ export default function App() {
   const [snName,     setSnName]     = useState("");
   const [dates,      setDates]      = useState([]);
   const [dateTimes,  setDateTimes]  = useState({});
-  const [dateNurses, setDateNurses] = useState({});
-  const [skippedDates, setSkippedDates] = useState([]);
+  const [skippedDates, setSkippedDates] = useState([]); // visit dates outside the cert period (not generated)
   const [previewVS,  setPreviewVS]  = useState(()=>pickVS());
   const [bidPatient, setBidPatient] = useState(false);
   const [autoAMPM,   setAutoAMPM]   = useState(false);
@@ -786,6 +838,9 @@ export default function App() {
   const [bulkText,   setBulkText]   = useState("");
   const [bulkEntries,setBulkEntries]= useState([]); // parsed [{date,timeIn,timeOut}]
   const [file487,    setFile487]    = useState(null);
+  const [woundMode,  setWoundMode]  = useState(false);
+  const [manualWound,setManualWound]= useState({location:"",careOrder:"",dressingType:"",frequency:""});
+  const [showWoundFields,setShowWoundFields]=useState(false);
   const fileRef = useRef(null);
   const fileRef487 = useRef(null);
 
@@ -868,7 +923,7 @@ export default function App() {
       certEnd.setHours(23,59,59,999);
       const inPeriod = [];
       for (const v of visits) {
-        if (v.date < certStart || v.date > certEnd) skipped.push(v.dk);
+        if (v.date < certStart || v.date > certEnd) skipped.push(v.dk || fmtDate(v.date));
         else inPeriod.push(v);
       }
       visits = inPeriod;
@@ -887,6 +942,29 @@ export default function App() {
       if (!proceed) { return; }
     }
 
+    // WOUND MODE validation (spec §13/§21): wound order must exist from 485/487 or manual input
+    if (woundMode) {
+      const extractedOrder = (poc.woundCareOrder||"").trim();
+      const manualOrder = (manualWound.careOrder||"").trim();
+      const hasWoundData = poc.hasWound || (poc.wounds||[]).length > 0;
+      if (!extractedOrder && !manualOrder && !hasWoundData) {
+        setError("Wound mode was requested, but no wound care order was found in the uploaded 485/487. Please provide wound location, wound care order, dressing type, and frequency.");
+        return;
+      }
+      // Nurse-name validation: every visit needs a nurse (inline, grouped, or the global SN Name field)
+      if (!snName.trim()) {
+        const missing = visits.filter(v => !(v.nurseName||"").trim());
+        if (missing.length > 0) {
+          setError(`Cannot generate wound notes: ${missing.length} visit(s) have no nurse name. Add "Nurse: Name" lines in bulk input or fill the SN Name field.`);
+          return;
+        }
+      }
+    }
+
+    // BID with no injectable in the 485 → generate without injection docs
+    // (useInjection already handles this). No blocking confirm — keeps the
+    // headless automation from stalling.
+
     setGenerating(true); setError(null); setNotes([]);
     try {
       const topics = poc.teachingTopics||[];
@@ -899,6 +977,22 @@ export default function App() {
       const dayCache = {};   // dateKey -> {topic, intervention}
       const uniqueDays = [...new Set(visits.map(v=>v.dk))];
 
+      // WOUND MODE: merged wound data (manual input fills gaps; never overwrites extracted 485 data)
+      const woundOrder = (poc.woundCareOrder||"").trim() || (manualWound.careOrder||"").trim() || "";
+      const woundDressing = (poc.dressingType||"").trim() || (manualWound.dressingType||"").trim() || "not specified";
+      const woundList = (poc.wounds&&poc.wounds.length) ? poc.wounds
+        : (manualWound.location ? [{location:manualWound.location,type:"",stage:"",size:"",drainage:"",odor:"",periwound:"",woundBed:"",careOrder:manualWound.careOrder||""}]
+        : (poc.hasWound ? [{location:poc.woundDesc||"per plan of care",type:"",stage:poc.woundStage||"",size:"",drainage:"",odor:"",periwound:"",woundBed:"",careOrder:woundOrder}] : []));
+      const woundsStr = woundList.map((w,wi)=>{
+        const parts=[`Wound #${wi+1}: ${w.location||"location per POC"}`];
+        if(w.type) parts.push(w.type);
+        if(w.stage) parts.push("stage "+w.stage);
+        if(w.size) parts.push(w.size);
+        if(w.drainage) parts.push("drainage: "+w.drainage);
+        if(w.careOrder) parts.push("order: "+w.careOrder);
+        return parts.join(", ");
+      }).join(" | ") || "wound per plan of care (details not specified — use conservative wording)";
+
       for(let i=0;i<visits.length;i++){
         const v = visits[i];
         const date = v.date;
@@ -909,9 +1003,14 @@ export default function App() {
         const painLevel = getPainLevelByVisit(i, total);
         const dayIdx = uniqueDays.indexOf(dk);
         const obs = getObsForVisit(dayIdx, 3, poc);
-        const topic = isLast ? "MEDICATION SAFETY & DISCHARGE PLANNING"
-                    : (phase==="PRE_DISCHARGE" ? "DISCHARGE PLANNING & READINESS REVIEW"
-                    : (dayCache[dk]?.topic || topics[dayIdx%topics.length] || "DISEASE PROCESS & MANAGEMENT"));
+        // Wound mode: teaching rotates through WOUND_TEACHING (skip BS topic for non-diabetics)
+        const wtPool = WOUND_TEACHING.filter(t => poc.isDiabetic || !t[0].includes("BLOOD SUGAR"));
+        const wt = wtPool[dayIdx % wtPool.length];
+        const topic = woundMode
+          ? (isLast ? "WOUND CARE & DISCHARGE PLANNING" : "WOUND CARE — " + wt[0])
+          : (isLast ? "MEDICATION SAFETY & DISCHARGE PLANNING"
+              : (phase==="PRE_DISCHARGE" ? "DISCHARGE PLANNING & READINESS REVIEW"
+              : (dayCache[dk]?.topic || topics[dayIdx%topics.length] || "DISEASE PROCESS & MANAGEMENT")));
         setGenStatus(`Generating note ${i+1}/${total}: ${topic}...`);
 
         const diagStr=(poc.diagnoses||[]).slice(0,8).join(", ");
@@ -945,8 +1044,13 @@ export default function App() {
         // BID notes add a ~80-word injection paragraph, so keep the AI base shorter
         // → total ≈ a normal note (fits one page at full font size).
         const wordTarget = useInjection ? "120-190" : "180-320";
-        const prompt=NOTE_PROMPT
+        const basePrompt = woundMode ? WOUND_NOTE_PROMPT : NOTE_PROMPT;
+        const prompt=basePrompt
           .replace(/\{WORDS\}/g,wordTarget)
+          .replace(/\{WTOPIC\}/g, wt[1])
+          .replace(/\{WOUNDS\}/g, woundsStr)
+          .replace(/\{WORDER\}/g, woundOrder || "wound care per plan of care (no specific order text — use conservative wording)")
+          .replace(/\{WDRESSING\}/g, woundDressing)
           .replace(/\{PHASE\}/g,phase)
           .replace(/\{PAIN\}/g,painLevel)
           .replace(/\{PAINLOC\}/g,painLoc)
@@ -1023,7 +1127,7 @@ export default function App() {
           lastBM:fmtDateDot(bmDate), poc,
           timeIn:v.timeIn, timeOut:v.timeOut, injSite,
           painLevel, phase, painLoc,
-          nurseName: dateNurses[dk] || ""
+          nurseName: (v.nurseName||"").trim()
         });
         prevTopics.push(topic);
       }
@@ -1036,7 +1140,7 @@ export default function App() {
 
     // ── Download ───────────────────────────────────────────────────────────────
   const downloadNote = (note) => {
-    const html = buildNoteHTML({poc:note.poc, agencyName, snName:note.nurseName||snName, date:note.dk, timeIn:note.timeIn||"", timeOut:note.timeOut||"", vs:note.vs, topic:note.topic, intervention:note.intervention, lastBM:note.lastBM, isLastNote:note.isLast, painLevel:note.painLevel, phase:note.phase, painLoc:note.painLoc});
+    const html = buildNoteHTML({poc:note.poc, agencyName, snName: note.nurseName||snName, date:note.dk, timeIn:note.timeIn||"", timeOut:note.timeOut||"", vs:note.vs, topic:note.topic, intervention:note.intervention, lastBM:note.lastBM, isLastNote:note.isLast, painLevel:note.painLevel, phase:note.phase, painLoc:note.painLoc});
     const blob = new Blob([html],{type:"text/html;charset=utf-8"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1077,33 +1181,35 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 6, ready: true,
+      version: 8, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
+      setWound: (v) => { setWoundMode(!!v); if (v) setShowWoundFields(true); },
+      // Full visit list, duplicates allowed (AM+PM). Each visit may carry its
+      // own nurseName — flows straight into the bulk entries the app uses.
       setVisits: (list) => {
         const entries = (list||[]).map(v => {
           const [m,d,y] = String(v.date).split("/").map(Number);
           const dt = new Date(y, m-1, d); dt.setHours(12,0,0,0);
-          return { date: dt, timeIn: v.timeIn || "", timeOut: v.timeOut || "", raw: `${v.date} ${v.timeIn||""}-${v.timeOut||""}` };
+          return { date: dt, timeIn: v.timeIn || "", timeOut: v.timeOut || "", nurseName: (v.nurseName||"").trim(), raw: `${v.date} ${v.timeIn||""}-${v.timeOut||""}${v.nurseName?" Nurse: "+v.nurseName:""}` };
         }).filter(e => !isNaN(e.date))
           .sort((a,b) => a.date - b.date || String(a.timeIn).localeCompare(String(b.timeIn)));
         setBulkText(entries.map(e => e.raw).join("\n"));
         setBulkEntries(entries);
       },
-      setVisitNurses: (map) => { setDateNurses(prev => ({ ...prev, ...(map||{}) })); },
       extract: () => { extract485(); },
       generate: () => { generateAll(); },
       getState: () => ({
         hasFile: !!file, extracting, generating, hasPoc: !!poc,
         agency: agencyName, nurse: snName, dates: dates.map(fmtDate),
-        visitNurses: dateNurses, bid: bidPatient, bulkCount: bulkEntries.length,
+        bid: bidPatient, wound: woundMode, bulkCount: bulkEntries.length,
         certPeriod: { start: poc?.certPeriodStart || "", end: poc?.certPeriodEnd || "" },
         skippedDates, noteCount: notes.length, status: genStatus, error
       }),
       getNotesHTML: () => notes.map(noteToHTML)
     };
-  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, dateNurses, skippedDates, bidPatient, bulkEntries, notes, genStatus, error]);
+  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, skippedDates, bidPatient, woundMode, bulkEntries, notes, genStatus, error]);
 
   // Stage badge
   const stageBadge = poc ? {
@@ -1174,6 +1280,25 @@ export default function App() {
               <input type="checkbox" checked={bidPatient} onChange={e=>setBidPatient(e.target.checked)} style={{width:16,height:16,accentColor:"#2b6cb0",cursor:"pointer"}}/>
               <span><b>BID Patient</b> — document injection on each visit {poc?.injectable?.found && <span style={{fontSize:10,background:"#dcfce7",color:"#166534",padding:"1px 6px",borderRadius:8,fontWeight:600,marginLeft:4}}>💉 {poc.injectable.name} detected</span>}</span>
             </label>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:12.5}}>
+              <input type="checkbox" checked={woundMode} onChange={e=>{setWoundMode(e.target.checked); if(e.target.checked) setShowWoundFields(true);}} style={{width:16,height:16,accentColor:"#dc2626",cursor:"pointer"}}/>
+              <span><b>Wound Patient / Wound Care Notes</b> — wound-focused visit notes {poc?.hasWound && <span style={{fontSize:10,background:"#fee2e2",color:"#991b1b",padding:"1px 6px",borderRadius:8,fontWeight:600,marginLeft:4}}>🩹 wound found in 485</span>}</span>
+            </label>
+            {woundMode && (
+              <div style={{marginLeft:24,padding:"8px 10px",background:"#fff7ed",border:"1px solid #fed7aa",borderRadius:8}}>
+                <div onClick={()=>setShowWoundFields(!showWoundFields)} style={{fontSize:11,fontWeight:700,color:"#9a3412",cursor:"pointer",marginBottom:showWoundFields?6:0}}>
+                  {showWoundFields?"▾":"▸"} Manual wound fields (optional — fills gaps; 485 data has priority)
+                </div>
+                {showWoundFields && (
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                    <input placeholder="Wound location (e.g. left heel)" value={manualWound.location} onChange={e=>setManualWound({...manualWound,location:e.target.value})} style={{fontSize:11,padding:"5px 8px",border:"1px solid #fdba74",borderRadius:6}}/>
+                    <input placeholder="Dressing type" value={manualWound.dressingType} onChange={e=>setManualWound({...manualWound,dressingType:e.target.value})} style={{fontSize:11,padding:"5px 8px",border:"1px solid #fdba74",borderRadius:6}}/>
+                    <input placeholder="Wound care order" value={manualWound.careOrder} onChange={e=>setManualWound({...manualWound,careOrder:e.target.value})} style={{fontSize:11,padding:"5px 8px",border:"1px solid #fdba74",borderRadius:6,gridColumn:"1 / -1"}}/>
+                    <input placeholder="Frequency (e.g. daily)" value={manualWound.frequency} onChange={e=>setManualWound({...manualWound,frequency:e.target.value})} style={{fontSize:11,padding:"5px 8px",border:"1px solid #fdba74",borderRadius:6}}/>
+                  </div>
+                )}
+              </div>
+            )}
             <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:12.5}}>
               <input type="checkbox" checked={autoAMPM} onChange={e=>setAutoAMPM(e.target.checked)} style={{width:16,height:16,accentColor:"#2b6cb0",cursor:"pointer"}}/>
               <span><b>Auto-create AM/PM</b> — 2 notes per calendar date (07:00 & 19:00)</span>
