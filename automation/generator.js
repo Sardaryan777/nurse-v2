@@ -66,10 +66,11 @@ async function waitForSettle(page, timeout) {
  * @param {Array}  opts.visits         [{ date:"MM/DD/YYYY", timeIn:"HH:MM AM", timeOut:"HH:MM PM" }] — duplicates (AM+PM) allowed
  * @param {Object} [opts.nurses]       { "MM/DD/YYYY": "Nurse Name / LVN" } per-visit nurses
  * @param {boolean} [opts.bid]         "BID" in email subject -> check BID Patient box
+ * @param {boolean} [opts.wound]       "Wound" in email subject -> check Wound mode box
  * @returns {Promise<{pdfs:Array,noteCount:number,skippedDates:string[],certPeriod:object}>}
  */
 export async function runGenerator(opts) {
-  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, visits, nurses = {}, bid = false } = opts;
+  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, visits, nurses = {}, bid = false, wound = false } = opts;
 
   // Write PDF to a temp file so the native file input can accept it.
   const tmpPdf = path.join(os.tmpdir(), `poc-${Date.now()}.pdf`);
@@ -95,12 +96,14 @@ export async function runGenerator(opts) {
       window.__automation.setNurse(n);
     }, agencyName || "", nurseName || "");
 
-    // 3. Send the full visit list (AM+PM duplicates preserved) + nurses + BID.
-    await page.evaluate((vlist, nmap, bidFlag) => {
+    // 3. Send the full visit list (AM+PM duplicates preserved, each visit may
+    //    carry its own nurseName) + BID + Wound flags from the email subject.
+    await page.evaluate((vlist, nmap, bidFlag, woundFlag) => {
       if (window.__automation.setVisits) window.__automation.setVisits(vlist);
       if (window.__automation.setVisitNurses) window.__automation.setVisitNurses(nmap);
       if (window.__automation.setBID) window.__automation.setBID(bidFlag);
-    }, visits, nurses, bid);
+      if (window.__automation.setWound) window.__automation.setWound(woundFlag);
+    }, visits, nurses, bid, wound);
 
     // Give React a moment to commit state.
     await sleep(500);

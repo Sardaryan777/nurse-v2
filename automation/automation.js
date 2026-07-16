@@ -101,6 +101,10 @@ async function processMessage(gmail, messageRef) {
   const bid = /\bBID\b/i.test(msg.subject || "");
   if (bid) log(`  "BID" in subject → BID Patient mode ON.`);
 
+  // "Wound" in the email SUBJECT → wound care notes mode. "Wound BID" turns on both.
+  const wound = /\bwound\b/i.test(msg.subject || "");
+  if (wound) log(`  "Wound" in subject → Wound mode ON.`);
+
   // 5. Drive the generator site -> ONE merged PDF (+ any dates skipped for cert period).
   const { pdfs, noteCount = 0, skippedDates = [], certPeriod = { start: "", end: "" } } = await runGenerator({
     url: GENERATOR_URL,
@@ -110,7 +114,8 @@ async function processMessage(gmail, messageRef) {
     nurseName,
     visits,
     nurses,
-    bid
+    bid,
+    wound
   });
 
   const certLabel = (certPeriod.start || certPeriod.end)
