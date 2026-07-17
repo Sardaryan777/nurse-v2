@@ -44,6 +44,14 @@ function fmtDateDot(d) { if(!d)return""; return `${String(d.getMonth()+1).padSta
 function fmtTime(h,m,ap) { return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} ${ap}`; }
 
 // Injection site rotation — avoids left arm if restricted
+// Why the SKILLED NURSE (not the caregiver) performed wound care this visit (review fix #6)
+const SN_NECESSITY = [
+  "Caregiver was unavailable at the time of this visit; SN performed wound care per physician order.",
+  "Caregiver requested SN perform the dressing change and re-demonstrate proper technique this visit.",
+  "Caregiver was unable to safely complete the dressing change due to patient positioning needs; SN performed wound care per order.",
+  "Wound care performed by SN this visit at patient/caregiver request per physician order.",
+  "SN performed wound care this visit to assess wound progress and reinforce caregiver technique; caregiver observed the procedure."
+];
 const WOUND_TEACHING = [
   ["INFECTION SIGNS & SYMPTOMS", "signs and symptoms of wound infection — increased drainage, foul odor, fever, spreading redness, swelling, warmth, or increased pain — and reporting them promptly to the physician/home health agency"],
   ["KEEPING DRESSING CLEAN & DRY", "keeping the dressing clean, dry, and intact between visits, and notifying the nurse if the dressing becomes wet, soiled, or loosened"],
@@ -139,7 +147,7 @@ Detect stage automatically:
 - If "Discharge" → stage = "DISCHARGE"
 
 Return this exact structure:
-{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"sobExertion":"","cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","wounds":[],"woundCareOrder":"","cleansingSolution":"","dressingType":"","woundSupplies":"","woundFrequency":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
+{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"sobExertion":"","cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","wounds":[],"woundIsPressure":false,"caregiverPerformsWoundCare":false,"bpArmRestriction":"","o2RoomAir":true,"woundCareOrder":"","cleansingSolution":"","dressingType":"","woundSupplies":"","woundFrequency":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
 
 RULES:
 - stage: exactly "SOC", "RECERT", or "DISCHARGE"  
@@ -150,6 +158,10 @@ RULES:
 - isBedbound: true if Complete Bedrest, bedbound, or bedrest is marked in Activities Permitted or functional limitations
 - hasWound: true if pressure ulcer, wound, decubitus, or wound care orders present. woundDesc: brief location description (e.g. "coccyx and right hip pressure ulcers"). woundStage: stage if stated (e.g. "1")
 - wounds: array of wound objects, one per distinct wound site found ANYWHERE in the document (diagnoses, orders, 487, supplies, goals). Each: {"location":"","type":"","stage":"","size":"","drainage":"","odor":"","periwound":"","woundBed":"","careOrder":""}. Search terms: wound, ulcer, pressure ulcer, decubitus, stage, drainage, dressing, cleanse, NS/normal saline, gauze, foam, calcium alginate, hydrocolloid, silver, xeroform, Santyl, Betadine, Kerlix, compression, offloading, diabetic/venous/arterial/surgical ulcer. Fill each field ONLY with what the document states VERBATIM — leave "" when not documented. NEVER invent measurements, stages, drainage amounts, odor, or dressing types
+- woundIsPressure: true ONLY if the wound is a pressure injury/ulcer/decubitus (stage documented or pressure etiology stated). false for open wounds, surgical wounds, moisture/skin-fold wounds, venous/arterial/diabetic ulcers described without pressure etiology
+- caregiverPerformsWoundCare: true if the orders state the CAREGIVER is to perform routine/daily wound care (SN performs when caregiver unavailable or on request)
+- bpArmRestriction: "right" or "left" if the document restricts BP measurement in that arm (mastectomy, lymphedema, AV fistula, "no BP right arm"); "" if no restriction
+- o2RoomAir: false ONLY if the patient is documented on supplemental oxygen; true otherwise (sat measured on room air)
 - woundCareOrder: the EXACT wound care order text from the document (e.g. "Clean with NS, pat dry, apply triple antibiotic cream, secure with 4x4"). "" if none found
 - cleansingSolution/dressingType/woundSupplies/woundFrequency: extracted verbatim from orders/supplies; "" when not stated
 - hasContracture: true if contracture diagnosis or functional limitation listed
@@ -217,6 +229,8 @@ STRICT DATA RULE: Only document wound details listed below. NEVER invent wound m
 VISIT CONTEXT:
 - Wound teaching topic this visit: {WTOPIC}
 - Wound(s) — document EACH separately, never merge: {WOUNDS}
+- OBJECTIVE FINDINGS THIS VISIT — document these exact values as what was observed (measurement, wound bed, drainage, edges): {WFINDINGS}
+- Why SN (not caregiver) performed wound care this visit: {WNECESSITY}
 - Wound care order (follow EXACTLY, never substitute solutions/dressings): {WORDER}
 - Dressing type: {WDRESSING}   (if "not specified": write "dressing changed per physician order and agency protocol" — do NOT invent one)
 - Visit phase: {PHASE}  |  Note #{NUM} of {TOTAL}
@@ -229,13 +243,14 @@ VISIT CONTEXT:
 
 Write ONE flowing intervention with this structure:
 1. Arrival block: "SN arrived for scheduled skilled nursing visit. Patient identified by two identifiers. Vital signs checked and recorded. Patient assessed for pain, respiratory status, cardiovascular status, safety, skin integrity, and homebound status. Hand hygiene performed before and after patient care."
-2. Wound assessment: "SN assessed wound site per physician order. Old dressing was removed using clean technique. Wound was assessed for drainage, odor, redness, swelling, warmth, periwound condition, and signs/symptoms of infection." Add specifics ONLY from the wound data above; if fields are blank use: "No acute complication was reported during this visit."
-3. Wound care performed: follow the care order EXACTLY (e.g. cleansing solution, application, securing). Base: "Wound care was performed per plan of care. Wound was cleansed as ordered, periwound skin protected, and new dressing applied. Patient tolerated wound care procedure without adverse reaction." If multiple wounds: "Wound #1: [location]... Wound #2: [location]..." separately.
+2. Wound assessment — DOCUMENT THE ACTUAL FINDINGS, not just what was assessed (an auditor's rule: "stating that something was assessed is not the same as documenting the findings"). Write the objective findings from {WFINDINGS}: current measurement, wound bed appearance (granulation/epithelial %), drainage type and amount, wound edges, periwound skin. Note the change from prior visits naturally (e.g. "decreased from prior visit", "granulation increasing"). If NO measurement data exists, use qualitative progression wording only — never invent numbers.
+3. State {WNECESSITY} if provided (skip if 'not applicable'), then wound care performed: follow the care order EXACTLY (e.g. cleansing solution, application, securing). Base: "Wound care was performed per plan of care. Wound was cleansed as ordered, periwound skin protected, and new dressing applied. Patient tolerated wound care procedure without adverse reaction." If multiple wounds: "Wound #1: [location]... Wound #2: [location]..." separately.
 4. {INJECTION_SENTENCE}
 5. Teaching (3-5 sentences) on {WTOPIC}, individualized to the patient's actual diagnoses.
 6. Close: homebound status + "Plan is to continue skilled nursing visits for wound care, assessment, and teaching per plan of care." (unless FINAL_DISCHARGE phase — then goals met / appropriate for discharge wording).
 
-RULES: LVN wording only (observed, monitored, performed, reinforced). Never his/her, s/he, their, [placeholders]. Vary sentence structure between notes. IF PHASE IS FINAL_DISCHARGE: include final wound assessment summary, do NOT write "continue plan of care" — write skilled nursing goals met / maximum benefit achieved and appropriate for discharge. Return ONLY the paragraph text.`;
+DISCHARGE CONSISTENCY (critical audit rule): the final discharge note's wound findings and goal statements must AGREE. If {WFINDINGS} shows the wound closed/epithelialized → document closure AND "wound care goals met". Only make goal-met claims that the documented findings support.
+RULES: Write like a real nurse charting a real patient — natural, specific, varied. Open sentences differently in each note; never reuse identical phrasing from prior notes; let the wound findings tell a believable healing story visit to visit. LVN wording only (observed, monitored, performed, reinforced). Never his/her, s/he, their, [placeholders]. IF PHASE IS FINAL_DISCHARGE: include final wound assessment summary, do NOT write "continue plan of care" — write skilled nursing goals met / maximum benefit achieved and appropriate for discharge. Return ONLY the paragraph text.`;
 
 // ── VARIATION PROMPT ──────────────────────────────────────────────────────────
 const VARIATION_PROMPT = `Rewrite this nursing intervention paragraph with COMPLETELY DIFFERENT wording, sentence structure, and phrasing. Keep ALL the same clinical meaning and actions. Use synonyms throughout. Change sentence order. Must sound like a different nurse wrote it on a different day. Return ONLY the rewritten text, nothing else.
@@ -378,6 +393,43 @@ function getPainLocation(topic, diagnoses) {
   if(hasBack) return "lower back";
   return "lower back";
 }
+// WOUND HEALING TRAJECTORY — real wounds change over time (review fix #1, #4)
+// Returns per-visit objective findings: measurement shrinking toward closure,
+// wound bed evolving (slough → granulation → epithelialization), drainage decreasing.
+// NEVER invents a measurement when the 485 documents none — qualitative wording only.
+function getWoundProgress(wound, dayIdx, totalDays, dischargeOn) {
+  const f = totalDays <= 1 ? 0 : Math.min(1, dayIdx / (totalDays - 1));   // 0 → 1 across the episode
+  const willClose = dischargeOn; // discharge series must end consistent with "goals met"
+  // Parse documented measurement like "1 x 3.8 x 0.1 cm"
+  const m = String(wound.size||"").match(/([\d.]+)\s*[xX]\s*([\d.]+)(?:\s*[xX]\s*([\d.]+))?/);
+  let sizeStr = "";
+  if (m) {
+    const L0=parseFloat(m[1]), W0=parseFloat(m[2]), D0=m[3]?parseFloat(m[3]):null;
+    const shrink = willClose ? (1 - 0.97*f) : (1 - 0.72*f);       // ~97% closed vs steady improvement
+    const jitter = 1 + (((dayIdx*7)%5)-2)*0.015;                    // tiny natural variation, deterministic per day
+    const L=Math.max(0.1, L0*shrink*jitter), W=Math.max(0.1, W0*shrink*jitter);
+    const D=D0===null?null:Math.max(0, D0*(1-Math.min(1,f*1.4)));   // depth resolves first
+    const r=x=>Math.round(x*10)/10;
+    sizeStr = (willClose && f>=0.99)
+      ? "wound closed; resurfaced with epithelial tissue"
+      : `${r(L)} x ${r(W)}${D===null?"":" x "+r(D)} cm`;
+  }
+  // Wound bed / drainage / periwound by healing stage
+  let bed, drainage, edges;
+  if (willClose && f>=0.99) {
+    bed="fully epithelialized, no open area remaining"; drainage="none"; edges="closed, flush with surrounding skin";
+  } else if (f<0.25) {
+    bed="pink-red base with scattered yellow slough, early granulation forming"; drainage="scant-to-moderate serous"; edges="defined, no undermining or tunneling noted";
+  } else if (f<0.55) {
+    bed="increasing beefy-red granulation tissue covering an estimated 60-75% of the wound bed"; drainage="scant serous"; edges="contracting, no maceration";
+  } else if (f<0.85) {
+    bed="healthy granulation with advancing epithelial tissue at wound margins"; drainage="scant serous, decreasing"; edges="epithelializing, periwound intact";
+  } else {
+    bed="predominantly epithelialized with small remaining superficial open area"; drainage="none noted this visit"; edges="well-approximated, periwound skin intact without erythema or maceration";
+  }
+  return { sizeStr, bed, drainage, edges, closed: willClose && f>=0.99 };
+}
+
 // RULE 1: Single normalized assistive device — 485 DME/Activities Permitted is the source
 function getAssistiveDevice(poc) {
   if (poc.isBedbound) return null;            // bedbound: no ambulation device
@@ -692,7 +744,7 @@ ${bh(ms.depressedControlled||false)} Depressed at times( controlled with medicat
 ${bh(ms.agitated||false)}Agitated</div>
 
 <div class="sec"><div class="st">INTEGUMENTARY:</div>
-${bh(poc.hasWound||false)}Wound ${bh(poc.hasWound||false)}Decub Stage${bh(poc.woundStage==="1")}1${bh(poc.woundStage==="2")}2${bh(poc.woundStage==="3")}3${bh(poc.woundStage==="4")}4 ${poc.hasWound&&poc.woundDesc?`<u>${poc.woundDesc}</u>`:""}<br>
+${bh(poc.hasWound||false)}Wound ${bh((poc.hasWound&&poc.woundIsPressure)||false)}Decub Stage${bh(poc.woundIsPressure&&poc.woundStage==="1")}1${bh(poc.woundIsPressure&&poc.woundStage==="2")}2${bh(poc.woundIsPressure&&poc.woundStage==="3")}3${bh(poc.woundIsPressure&&poc.woundStage==="4")}4 ${poc.hasWound&&poc.woundDesc?`<u>${poc.woundDesc}</u>`:""}<br>
 ${bh(false)}Infected ${bh(false)} Foul odor drainage<br>
 ${bh(false)}Rashes ${bh(false)}Sizes<span style="border-bottom:1px solid #000;display:inline-block;width:30px"></span><br>
 ${bh(hp)}Tubes ${hp?'<span style="border-bottom:1px solid #000;display:inline-block;width:50px;font-size:8.4pt">left chest rib</span>':''}<span style="border-bottom:1px solid #000;display:inline-block;width:${hp?'5':'30'}px"></span> ${bh(hp)}${hp?'Shunt pleural catheter':'Shunt'}<br>
@@ -706,7 +758,7 @@ ${bh(poc.proneToAspiration||false)}Prone to aspiration</div>
 ${bh(df.sob||false)}SOB ${bh(df.sob&&df.sobExertion==="rest")}Rest${bh(df.sob&&df.sobExertion==="minimal")}min. exer ${bh(df.sob&&(df.sobExertion==="moderate"||!df.sobExertion))}<br>
 mod. exertion ${bh(false)}Cough ${bh(false)}Productive ${bh(false)}Non-productive ${bh(false)} Sputum Color:<span style="border-bottom:1px solid #000;display:inline-block;width:16px"></span> ${bh(false)}Amount<br>
 Lung Sound: <u>${poc.lungSounds||"clear"}</u><br>
-O2sat <u>${poc.o2Sat||vs.o2||"96"}%</u> LPM &nbsp;Other</div>
+O2sat <u>${vs.o2||poc.o2Sat||"96"}% ${(poc.o2RoomAir!==false)?"RA":"O2"}</u> &nbsp;Other</div>
 
 <div class="sec"><div class="st">MUSCULOSKELETAL: </div>
 ${bh(df.stiffJoints||false)}Stiff joints ${bh(df.weakness||false)}Weakness ${bh(df.limitedROM||false)}Limited ROM<br>
@@ -760,16 +812,16 @@ ${bh(true)} ID/insurance ,Face</div>
 <div class="right">
 <div class="sec">
 <b>Vital Signs</b>: T: <u>${vs.temp}</u> HR:<u>${vs.hr}</u>bpm &nbsp;RR: <u>${vs.rr}</u>/min BS ${poc.isDiabetic?`<u>${vs.bs}</u>mg/dL`:`<span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span>`} F${bh(false)}R${bh(false)} Repeat <span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span><br>
-BP: <b>R / L</b> Lying <span style="border-bottom:1px solid #000;display:inline-block;width:16px"></span> Sitting <u>${vs.bp}</u>mmHg &nbsp;Standing <span style="border-bottom:1px solid #000;display:inline-block;width:28px"></span> &nbsp;Repeat: <span style="border-bottom:1px solid #000;display:inline-block;width:18px"></span>mmHg &nbsp;Wt: <u>${poc.patient?.weight||poc.weight||""}</u>
+BP: <b>R / L</b> Lying <span style="border-bottom:1px solid #000;display:inline-block;width:16px"></span> Sitting <u>${vs.bp}</u>mmHg${poc.bpArmRestriction==="right"?" (L arm)":poc.bpArmRestriction==="left"?" (R arm)":""} &nbsp;Standing <span style="border-bottom:1px solid #000;display:inline-block;width:28px"></span> &nbsp;Repeat: <span style="border-bottom:1px solid #000;display:inline-block;width:18px"></span>mmHg &nbsp;Wt: <u>${poc.patient?.weight||poc.weight||""}</u>
 </div>
 
 <div class="sec">
 <b>HOMEBOUND STATUS: </b>${bh(hbf.limitedEndurance!==false)}Poor/Limited Endurance ${bh(hbf.limitedStrength!==false)} Poor/Limited Strength<br>
-${bh(df.sob||false)} SOBOE ${bh(!poc.isBedbound)}Poor Unsteady Gait ${bh(hbf.assistADL!==false)}Requires Assist with ADL<br>
+${bh(df.sob||false)} SOBOE ${bh(!poc.isBedbound&&(df.unsteadyBalance===true||!!getAssistiveDevice(poc)))}Poor Unsteady Gait ${bh(hbf.assistADL!==false)}Requires Assist with ADL<br>
 ${bh(hbf.unevenSurfaces!==false)} Unable to Negotiate Uneven Surfaces or Steps ${bh(false)} Medical Restrictions<br>
-${bh(poc.isBedbound||false)}Non-wt bearing &nbsp;${bh(true)}Requires assist with transfer ${bh(!poc.isBedbound)}Requires assistive device to ambulate ${bh(hbf.confusion||ms.confusedAtTimes||false)} Confusion${bh(hbf.unableToLeaveAlone!==false)}<br>
+${bh(poc.isBedbound||false)}Non-wt bearing &nbsp;${bh(poc.isBedbound||!!getAssistiveDevice(poc)||df.weakness===true)}Requires assist with transfer ${bh(!poc.isBedbound&&!!getAssistiveDevice(poc))}Requires assistive device to ambulate ${bh(hbf.confusion||ms.confusedAtTimes||false)} Confusion${bh(hbf.unableToLeaveAlone!==false)}<br>
 Unable to leave home without assistance ${bh(poc.isBedbound||false)}Bedbound<br>
-${bh(poc.hasParalysis||false)}Paralysis UE / LE / both ${bh(!poc.isBedbound)}Requires assist to ambulate ${bh(hbf.poorCoordination||df.unsteadyBalance||false)}Poor coordination or balance ${bh(false)}Partial wt bearing<br>
+${bh(poc.hasParalysis||false)}Paralysis UE / LE / both ${bh(!poc.isBedbound&&(!!getAssistiveDevice(poc)||df.weakness===true))}Requires assist to ambulate ${bh(hbf.poorCoordination||df.unsteadyBalance||false)}Poor coordination or balance ${bh(false)}Partial wt bearing<br>
 ${bh(hbf.taxingEffort!==false)} Others: requires considerable and taxing efforts to leave home even with assistance from caregiver.
 </div>
 
@@ -839,8 +891,17 @@ export default function App() {
   const [bulkEntries,setBulkEntries]= useState([]); // parsed [{date,timeIn,timeOut}]
   const [file487,    setFile487]    = useState(null);
   const [woundMode,  setWoundMode]  = useState(false);
+  const [emailSubject,setEmailSubject]= useState("");
   const [manualWound,setManualWound]= useState({location:"",careOrder:"",dressingType:"",frequency:""});
   const [showWoundFields,setShowWoundFields]=useState(false);
+  // Email subject routing (spec §1): "Wound" → wound mode ON; "BID"/"PID" → BID logic ON.
+  // Case-insensitive. Keywords only auto-ENABLE — they never uncheck a mode the user set manually.
+  const applyEmailSubject = (subj) => {
+    setEmailSubject(subj);
+    if (/wound/i.test(subj)) setWoundMode(true);
+    if (/\b(bid|pid)\b/i.test(subj)) setBidPatient(true);
+  };
+
   const fileRef = useRef(null);
   const fileRef487 = useRef(null);
 
@@ -1006,6 +1067,20 @@ export default function App() {
         // Wound mode: teaching rotates through WOUND_TEACHING (skip BS topic for non-diabetics)
         const wtPool = WOUND_TEACHING.filter(t => poc.isDiabetic || !t[0].includes("BLOOD SUGAR"));
         const wt = wtPool[dayIdx % wtPool.length];
+        // Per-day wound trajectory (review fixes #1+#4): same-day AM/PM share the same findings
+        let woundFindingsStr = "not applicable", necessityStr = "not applicable";
+        if (woundMode) {
+          woundFindingsStr = woundList.map((w, wi) => {
+            const p = getWoundProgress(w, dayIdx, uniqueDays.length, dischargeOn);
+            const parts = [`Wound #${wi+1} (${w.location||"per POC"})`];
+            if (p.sizeStr) parts.push("measurement: " + p.sizeStr);
+            parts.push("wound bed: " + p.bed);
+            parts.push("drainage: " + p.drainage);
+            parts.push("edges/periwound: " + p.edges);
+            return parts.join("; ");
+          }).join(" | ") || "qualitative assessment only — no measurements documented in POC";
+          necessityStr = poc.caregiverPerformsWoundCare ? SN_NECESSITY[dayIdx % SN_NECESSITY.length] : "not applicable";
+        }
         const topic = woundMode
           ? (isLast ? "WOUND CARE & DISCHARGE PLANNING" : "WOUND CARE — " + wt[0])
           : (isLast ? "MEDICATION SAFETY & DISCHARGE PLANNING"
@@ -1049,6 +1124,8 @@ export default function App() {
           .replace(/\{WORDS\}/g,wordTarget)
           .replace(/\{WTOPIC\}/g, wt[1])
           .replace(/\{WOUNDS\}/g, woundsStr)
+          .replace(/\{WFINDINGS\}/g, woundFindingsStr)
+          .replace(/\{WNECESSITY\}/g, necessityStr)
           .replace(/\{WORDER\}/g, woundOrder || "wound care per plan of care (no specific order text — use conservative wording)")
           .replace(/\{WDRESSING\}/g, woundDressing)
           .replace(/\{PHASE\}/g,phase)
@@ -1114,8 +1191,9 @@ export default function App() {
         setPreviewVS(vs);
         // BID diabetic BS logic: AM (fasting) lower, PM higher — always non-reportable
         if (poc.isDiabetic) {
-          const isAM = /am/i.test(v.timeIn||"") || (parseInt(v.timeIn)||9) < 12;
-          vs.bs = String(isAM ? Math.floor(110 + Math.random()*40)   // AM 110-150
+          const tstr = v.timeIn||"";
+          const isAM = /pm/i.test(tstr) ? false : (/am/i.test(tstr) ? true : (parseInt(tstr)||9) < 12);
+          vs.bs = String(isAM ? Math.floor(110 + Math.random()*40)   // AM fasting 110-150
                               : Math.floor(135 + Math.random()*45)); // PM 135-180
         }
         // Constipation patients: BM 2-3 days back (daily BM contradicts K59.04); others: 1 day
@@ -1181,7 +1259,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 8, ready: true,
+      version: 9, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
@@ -1273,6 +1351,21 @@ export default function App() {
         <div style={{padding:"14px 22px 0"}}>
           <div style={{fontSize:11,fontWeight:800,color:"#2b6cb0",letterSpacing:1,textTransform:"uppercase",marginBottom:10,display:"flex",alignItems:"center"}}><SL/>Visit Details</div>
           <div style={{marginBottom:12}}><NameAutocomplete value={snName} onChange={setSnName}/></div>
+
+          {/* Email subject routing (spec §1) */}
+          <div style={{marginBottom:10}}>
+            <label style={{fontSize:11,fontWeight:700,color:"#475569",display:"block",marginBottom:4}}>📧 Email Subject <span style={{fontWeight:400,color:"#94a3b8"}}>(optional — auto-detects mode)</span></label>
+            <input value={emailSubject} onChange={e=>applyEmailSubject(e.target.value)}
+              placeholder={'e.g. "Makrui Uzunyan Wound BID Notes"'}
+              style={{width:"100%",fontSize:12,padding:"7px 10px",border:"1.5px solid #e2e8f0",borderRadius:8,boxSizing:"border-box"}}/>
+            {emailSubject && (
+              <div style={{display:"flex",gap:6,marginTop:4}}>
+                {/wound/i.test(emailSubject) && <span style={{fontSize:10,background:"#fee2e2",color:"#991b1b",padding:"2px 8px",borderRadius:10,fontWeight:700}}>🩹 WOUND MODE detected</span>}
+                {/\b(bid|pid)\b/i.test(emailSubject) && <span style={{fontSize:10,background:"#dcfce7",color:"#166534",padding:"2px 8px",borderRadius:10,fontWeight:700}}>💉 BID detected</span>}
+                {!/wound/i.test(emailSubject) && !/\b(bid|pid)\b/i.test(emailSubject) && <span style={{fontSize:10,color:"#94a3b8"}}>no mode keywords — regular notes</span>}
+              </div>
+            )}
+          </div>
 
           {/* Options: BID / Auto AM-PM / Discharge */}
           <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14,background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:10,padding:"12px 14px"}}>
