@@ -52,17 +52,36 @@ const SN_NECESSITY = [
   "Wound care performed by SN this visit at patient/caregiver request per physician order.",
   "SN performed wound care this visit to assess wound progress and reinforce caregiver technique; caregiver observed the procedure."
 ];
-const WOUND_TEACHING = [
+const WOUND_TEACHING_EARLY = [
   ["INFECTION SIGNS & SYMPTOMS", "signs and symptoms of wound infection — increased drainage, foul odor, fever, spreading redness, swelling, warmth, or increased pain — and reporting them promptly to the physician/home health agency"],
+  ["HAND HYGIENE & CLEAN TECHNIQUE", "hand hygiene before and after any contact with the wound or dressing, and clean technique principles to prevent contamination"],
   ["KEEPING DRESSING CLEAN & DRY", "keeping the dressing clean, dry, and intact between visits, and notifying the nurse if the dressing becomes wet, soiled, or loosened"],
-  ["PRESSURE RELIEF & REPOSITIONING", "pressure relief and repositioning at least every 2 hours, offloading the affected area, and protecting bony prominences to support wound healing"],
-  ["NUTRITION & HYDRATION FOR HEALING", "the role of adequate protein intake and hydration in wound healing, and maintaining the prescribed diet to support tissue repair"],
+  ["WHEN TO NOTIFY PHYSICIAN", "when to notify the physician: wound deterioration, new drainage or odor, bleeding, fever, increased pain, or any change in wound appearance"],
+  ["SAFE DRESSING DISPOSAL", "safe disposal of soiled dressings and contaminated materials, and keeping wound care supplies clean and organized"],
+  ["CAREGIVER WOUND CARE TECHNIQUE", "caregiver wound care technique per physician order, with return demonstration observed and reinforced by SN"]
+];
+const WOUND_TEACHING_MID = [
+  ["PRESSURE RELIEF & OFFLOADING", "pressure relief, offloading the affected area, and repositioning to support wound healing and prevent additional breakdown"],
+  ["MOISTURE CONTROL", "keeping the wound area and surrounding skin folds clean and dry, moisture control, and protecting the periwound skin"],
+  ["NUTRITION & PROTEIN FOR HEALING", "the role of adequate protein intake, nutrition, and hydration in wound healing and tissue repair"],
   ["BLOOD SUGAR CONTROL & WOUND HEALING", "the effect of blood sugar control on wound healing, since elevated glucose slows tissue repair and increases infection risk"],
   ["PAIN MANAGEMENT WITH WOUND CARE", "pain management before and during dressing changes, using ordered comfort measures and reporting pain not controlled by current measures"],
-  ["WHEN TO NOTIFY PHYSICIAN", "when to notify the physician: wound deterioration, new drainage or odor, bleeding, fever, increased pain, or any change in wound appearance"],
-  ["SKIN INSPECTION & PROTECTION", "daily inspection of surrounding skin, avoiding scratching or picking at the wound, and safe disposal of soiled dressings"],
-  ["HAND HYGIENE & INFECTION CONTROL", "hand hygiene before and after any contact with the wound or dressing, and clean technique principles to prevent contamination"]
+  ["SKIN INSPECTION & FALL SAFETY", "daily skin inspection, avoiding scratching or picking at the wound, and fall prevention during transfers and wound care positioning"]
 ];
+const WOUND_TEACHING_LATE = [
+  ["PROTECTING HEALING TISSUE", "protecting fragile new epithelial tissue from friction, shearing, and pressure as the wound closes"],
+  ["PREVENTING RECURRENCE", "preventing wound recurrence: maintaining a clean, dry skin area, avoiding friction and prolonged pressure, and continuing daily skin checks"],
+  ["MONITORING FOR REOPENING", "monitoring the healed/healing site for reopening, drainage, redness, warmth, odor, or increased pain, and reporting promptly"],
+  ["ONGOING SKIN CHECKS", "continuing routine skin inspection and moisture control after skilled nursing ends, and when to contact the physician or agency"]
+];
+function getWoundTeaching(band, dayIdx, isDiabetic) {
+  let pool = band === "early" ? WOUND_TEACHING_EARLY
+           : band === "mid" ? WOUND_TEACHING_MID
+           : WOUND_TEACHING_LATE;                       // late / final / healed
+  if (!isDiabetic) pool = pool.filter(t => t[0].indexOf("BLOOD SUGAR") === -1);
+  return pool[dayIdx % pool.length];
+}
+
 const BID_TEACHING = [
   "Instructed patient/caregiver on signs and symptoms of hypoglycemia (shakiness, sweating, confusion, dizziness, rapid heartbeat) and to treat promptly with fast-acting sugar, rechecking blood sugar in 15 minutes.",
   "Instructed patient/caregiver on signs and symptoms of hyperglycemia (increased thirst, frequent urination, fatigue, blurred vision) and to notify MD if blood sugar remains elevated.",
@@ -147,7 +166,7 @@ Detect stage automatically:
 - If "Discharge" → stage = "DISCHARGE"
 
 Return this exact structure:
-{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"sobExertion":"","cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","wounds":[],"woundIsPressure":false,"caregiverPerformsWoundCare":false,"bpArmRestriction":"","o2RoomAir":true,"woundCareOrder":"","cleansingSolution":"","dressingType":"","woundSupplies":"","woundFrequency":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
+{"stage":"SOC","patient":{"name":"","mrNumber":"","weight":"","dob":""},"agency":{"name":"","phone":""},"physician":{"name":""},"pcg":{"name":"","phone":""},"certPeriodStart":"","certPeriodEnd":"","snvFrequency":"","diagnoses":[],"medications":[],"diet":"low fat, low cholesterol","allergies":"NKDA","fallRiskScore":"","weight":"","referencesExternal487":false,"lungSounds":"clear","hasTremor":false,"hasVertigo":false,"hasPVD":false,"homeboundFlags":{"limitedEndurance":true,"limitedStrength":true,"assistADL":true,"unevenSurfaces":true,"confusion":false,"unableToLeaveAlone":true,"poorCoordination":false,"taxingEffort":true},"deficits":{"poorVision":false,"legallyBlind":false,"hoh":false,"deaf":false,"sob":false,"sobExertion":"","cough":false,"urinaryIncontinence":false,"bowelIncontinence":false,"urinaryFrequency":false,"urinaryUrgency":false,"edema":false,"stiffJoints":false,"weakness":false,"limitedROM":false,"unsteadyBalance":false},"hasCaregiver":false,"hasPleurX":false,"hasParalysis":false,"isBedbound":false,"hasWound":false,"woundDesc":"","woundStage":"","wounds":[],"woundIsPressure":false,"caregiverPerformsWoundCare":false,"bpArmRestriction":"","o2RoomAir":true,"o2Threshold":"","woundCareOrder":"","cleansingSolution":"","dressingType":"","woundSupplies":"","woundFrequency":"","hasContracture":false,"hasDysphagia":false,"proneToAspiration":false,"hasWheelchair":false,"hasWalker":false,"hasCane":false,"o2Sat":"96","isDiabetic":false,"leftArmRestricted":false,"injectable":{"found":false,"name":"","dose":"","route":"subcutaneous","frequency":"","instruction":""},"mentalStatus":{"oriented":true,"alert":true,"forgetful":true,"confusedAtTimes":true,"anxious":true,"depressedControlled":true,"agitated":false},"teachingTopics":[],"homebound":""}
 
 RULES:
 - stage: exactly "SOC", "RECERT", or "DISCHARGE"  
@@ -162,6 +181,8 @@ RULES:
 - caregiverPerformsWoundCare: true if the orders state the CAREGIVER is to perform routine/daily wound care (SN performs when caregiver unavailable or on request)
 - bpArmRestriction: "right" or "left" if the document restricts BP measurement in that arm (mastectomy, lymphedema, AV fistula, "no BP right arm"); "" if no restriction
 - o2RoomAir: false ONLY if the patient is documented on supplemental oxygen; true otherwise (sat measured on room air)
+- o2Threshold: the notification threshold number if the POC says to notify MD/RN when O2 sat falls below a value (e.g. "notify if SpO2 < 90" → "90"); "" if none stated
+- medications: EXCLUDE any medication marked discontinued, DC'd, stopped, or ended — only ACTIVE medications
 - woundCareOrder: the EXACT wound care order text from the document (e.g. "Clean with NS, pat dry, apply triple antibiotic cream, secure with 4x4"). "" if none found
 - cleansingSolution/dressingType/woundSupplies/woundFrequency: extracted verbatim from orders/supplies; "" when not stated
 - hasContracture: true if contracture diagnosis or functional limitation listed
@@ -208,10 +229,11 @@ BLOCK 1 — LVN visit actions (3-4 sentences):
 "{SUBJECT_CAP} was contacted prior to visit. LVN completed skilled observation and focused assessment/data collection per plan of care. Vital signs obtained and recorded. Lung and heart sounds monitored. Pain level reviewed. Medication compliance, diet adherence, homebound status, and safety measures were reviewed. Hand washing performed before and after patient care."
 
 BLOCK 2 — Pain + visit observations (3-4 sentences):
-State pain: "Patient reports {PAINCHAR} {PAINLOC} pain rated {PAIN}/10" + phase wording:
-- EARLY (5): if AMBULATORY: "increased with prolonged standing and ambulation, relieved partially by rest, repositioning, and {PAINMED_PHRASE}." — if BEDBOUND: "increased with repositioning and turning, relieved partially by pressure relief positioning, gentle handling, and {PAINMED_PHRASE}."
-- MIDDLE (3-4): "improved compared with prior visit; better controlled with rest, repositioning, gentle movement, and {PAINMED_PHRASE}."
-- LATE/DISCHARGE (2): "pain is controlled with current measures; no new acute pain complaints reported this visit."
+State pain: "Patient reported {PAINCHAR} {PAINLOC} pain rated {PAIN}/10" — wording MUST match the level:
+- 4-5/10: pain increased with activity (if BEDBOUND: with repositioning and turning, NOT standing/walking), partially relieved by rest, repositioning, and {PAINMED_PHRASE}.
+- 2-3/10: mild pain, managed with rest, repositioning, gentle activity, and {PAINMED_PHRASE}.
+- 1/10: minimal discomfort only; no intervention beyond routine comfort measures needed.
+Never write severe-pain language for a low score or minimizing language for a high score. If the level dropped vs typical, it can read as improvement; if it rose, note it fluctuated with activity.
 Then weave in the visit-specific observations naturally.
 {INJECTION_SENTENCE}
 
@@ -222,13 +244,14 @@ BLOCK 4 — MD/911 (1-2 sentences): when to notify MD (worsening pain, uncontrol
 RULES: Never write his/her, he/she, s/he, their, or [placeholders]. Never say "evaluation and assessment of all body systems" (RN-level) — use LVN wording (observed, monitored, reviewed, reinforced). Vary wording from prior notes. IF PHASE IS FINAL_DISCHARGE: do NOT write "continues to require skilled observation", "continued skilled teaching", "needs further assessment", "requires follow-up teaching", or "continue plan of care" — instead state that skilled nursing goals have been met / maximum benefit achieved and patient is appropriate for discharge. Return ONLY the paragraph text, no block labels.`;
 
 // ── WOUND NOTE PROMPT ─────────────────────────────────────────────────────────
-const WOUND_NOTE_PROMPT = `You are an experienced LVN writing a home health WOUND CARE visit note INTERVENTION section. Write real, concise skilled documentation — 200-330 words.
+const WOUND_NOTE_PROMPT = `You are an experienced LVN writing a home health WOUND CARE visit note INTERVENTION section. Write real, concise skilled documentation — 180-280 words for a routine visit. Only go up to 400 words when clinically justified (discharge/final note, wound worsening, abnormal vitals, MD/RN notification, caregiver re-demonstration). Not every note should be long — over-detailed routine notes look generated.
 
 STRICT DATA RULE: Only document wound details listed below. NEVER invent wound measurements, stages, drainage amounts, odor, wound bed findings, dressing types, or locations that are not provided. If a detail is blank/unknown, use conservative wording ("per physician order", "per plan of care").
 
 VISIT CONTEXT:
 - Wound teaching topic this visit: {WTOPIC}
 - Wound(s) — document EACH separately, never merge: {WOUNDS}
+- WOUND STAGE / CARE MODE THIS VISIT (controls what care is documented): {WSTAGE}
 - OBJECTIVE FINDINGS THIS VISIT — document these exact values as what was observed (measurement, wound bed, drainage, edges): {WFINDINGS}
 - Why SN (not caregiver) performed wound care this visit: {WNECESSITY}
 - Wound care order (follow EXACTLY, never substitute solutions/dressings): {WORDER}
@@ -244,7 +267,7 @@ VISIT CONTEXT:
 Write ONE flowing intervention with this structure:
 1. Arrival block: "SN arrived for scheduled skilled nursing visit. Patient identified by two identifiers. Vital signs checked and recorded. Patient assessed for pain, respiratory status, cardiovascular status, safety, skin integrity, and homebound status. Hand hygiene performed before and after patient care."
 2. Wound assessment — DOCUMENT THE ACTUAL FINDINGS, not just what was assessed (an auditor's rule: "stating that something was assessed is not the same as documenting the findings"). Write the objective findings from {WFINDINGS}: current measurement, wound bed appearance (granulation/epithelial %), drainage type and amount, wound edges, periwound skin. Note the change from prior visits naturally (e.g. "decreased from prior visit", "granulation increasing"). If NO measurement data exists, use qualitative progression wording only — never invent numbers.
-3. State {WNECESSITY} if provided (skip if 'not applicable'), then wound care performed: follow the care order EXACTLY (e.g. cleansing solution, application, securing). Base: "Wound care was performed per plan of care. Wound was cleansed as ordered, periwound skin protected, and new dressing applied. Patient tolerated wound care procedure without adverse reaction." If multiple wounds: "Wound #1: [location]... Wound #2: [location]..." separately.
+3. State {WNECESSITY} if provided (skip if 'not applicable'), then wound care — FOLLOW THE CARE MODE in {WSTAGE}: OPEN WOUND → full care per the order EXACTLY; NEARLY HEALED → minimal protective dressing/barrier, protection and monitoring focus; HEALED → NO cleansing/dressing-change language at all — skin integrity monitoring, moisture control, friction protection only. When performing full care, follow the order EXACTLY (e.g. cleansing solution, application, securing). Base: "Wound care was performed per plan of care. Wound was cleansed as ordered, periwound skin protected, and new dressing applied. Patient tolerated wound care procedure without adverse reaction." If multiple wounds: "Wound #1: [location]... Wound #2: [location]..." separately.
 4. {INJECTION_SENTENCE}
 5. Teaching (3-5 sentences) on {WTOPIC}, individualized to the patient's actual diagnoses.
 6. Close: homebound status + "Plan is to continue skilled nursing visits for wound care, assessment, and teaching per plan of care." (unless FINAL_DISCHARGE phase — then goals met / appropriate for discharge wording).
@@ -258,13 +281,29 @@ const VARIATION_PROMPT = `Rewrite this nursing intervention paragraph with COMPL
 Original:
 {TEXT}`;
 
-// Pain level by visit: starts 5/10, gradually improves to 2/10
-function getPainLevelByVisit(index, totalVisits) {
-  if (totalVisits <= 1) return 5;
-  const startPain = 5, endPain = 2;
-  const progress = index / (totalVisits - 1);
-  const pain = Math.round(startPain - progress * (startPain - endPain));
-  return Math.max(endPain, Math.min(startPain, pain));
+// PAIN RULE (CMS-485-based): range depends on what the 485 supports; variation is
+// natural, never one fixed number, never a robotic sequence. Same day shares a level.
+function painSupportedHigher(poc) {
+  const dx = stripNegated((poc.diagnoses||[]).join(" "));
+  const terms = ["sciatica","radiculopathy","arthritis","osteoarthritis","spondylosis","chronic pain","dorsalgia","back pain","neuropath","fibromyalgia","fracture","stenosis","gout","pain in"];
+  if (terms.some(t => dx.includes(t))) return true;
+  if (poc.hasWound) return true;                       // wound condition supports higher pain
+  if (findPainMed(poc.medications)) return true;       // ordered analgesic implies documented pain
+  return false;
+}
+function getPainLevelByVisit(dayIdx, totalDays, poc, phase) {
+  // Spec example patterns — cycled with a drifting offset so long series never repeat exactly
+  const HIGH = [5,4,3,4,2,3,3,2,4,3,2,2];
+  const LOW  = [3,2,2,3,3,1,1,2,3,2,1,2];
+  const supported = painSupportedHigher(poc||{});
+  const pat = supported ? HIGH : LOW;
+  const shift = Math.floor(dayIdx / pat.length);          // drift each cycle
+  let lvl = pat[(dayIdx + shift) % pat.length];
+  // Late-episode bias downward (healing/teaching effect) — still varies, never flat
+  const f = totalDays <= 1 ? 0 : dayIdx / (totalDays - 1);
+  if (f > 0.75) lvl = Math.min(lvl, supported ? 3 : 2);
+  if (phase === "FINAL_DISCHARGE" || phase === "PRE_DISCHARGE") lvl = Math.min(lvl, 2);
+  return Math.max(1, lvl);
 }
 
 // Visit phase based on position in episode
@@ -393,41 +432,59 @@ function getPainLocation(topic, diagnoses) {
   if(hasBack) return "lower back";
   return "lower back";
 }
-// WOUND HEALING TRAJECTORY — real wounds change over time (review fix #1, #4)
-// Returns per-visit objective findings: measurement shrinking toward closure,
-// wound bed evolving (slough → granulation → epithelialization), drainage decreasing.
+// WOUND HEALING TRAJECTORY — a healing CURVE, not a mathematical line (spec §2-3).
+// Plateaus early, drainage improves before size, depth resolves before length/width,
+// steps are irregular, and the final 3-5 visits transition to nearly-healed/healed logic.
 // NEVER invents a measurement when the 485 documents none — qualitative wording only.
 function getWoundProgress(wound, dayIdx, totalDays, dischargeOn) {
-  const f = totalDays <= 1 ? 0 : Math.min(1, dayIdx / (totalDays - 1));   // 0 → 1 across the episode
-  const willClose = dischargeOn; // discharge series must end consistent with "goals met"
-  // Parse documented measurement like "1 x 3.8 x 0.1 cm"
+  const f = totalDays <= 1 ? 0 : Math.min(1, dayIdx / (totalDays - 1));
+  const willClose = dischargeOn;
+  // Piecewise shrink curve with plateaus (fraction of ORIGINAL size remaining)
+  const CURVE_CLOSE = [[0.14,1.0],[0.22,0.97],[0.34,0.9],[0.42,0.9],[0.52,0.78],[0.62,0.68],[0.7,0.68],[0.78,0.5],[0.86,0.32],[0.93,0.15],[1.01,0.0]];
+  const CURVE_OPEN  = [[0.2,1.0],[0.35,0.94],[0.5,0.85],[0.62,0.85],[0.75,0.72],[0.88,0.62],[1.01,0.52]];
+  const curve = willClose ? CURVE_CLOSE : CURVE_OPEN;
+  let shrink = 1.0;
+  for (const [limit, val] of curve) { if (f < limit) { shrink = val; break; } }
+  const closed = willClose && f >= 0.97;
+  const nearlyHealed = willClose && !closed && f >= 0.82;   // final 3-5 visits of a long series
+  // Stage band for teaching + care wording
+  const band = closed ? "healed" : nearlyHealed ? "final" : f < 0.3 ? "early" : f < 0.7 ? "mid" : "late";
   const m = String(wound.size||"").match(/([\d.]+)\s*[xX]\s*([\d.]+)(?:\s*[xX]\s*([\d.]+))?/);
   let sizeStr = "";
   if (m) {
     const L0=parseFloat(m[1]), W0=parseFloat(m[2]), D0=m[3]?parseFloat(m[3]):null;
-    const shrink = willClose ? (1 - 0.97*f) : (1 - 0.72*f);       // ~97% closed vs steady improvement
-    const jitter = 1 + (((dayIdx*7)%5)-2)*0.015;                    // tiny natural variation, deterministic per day
-    const L=Math.max(0.1, L0*shrink*jitter), W=Math.max(0.1, W0*shrink*jitter);
-    const D=D0===null?null:Math.max(0, D0*(1-Math.min(1,f*1.4)));   // depth resolves first
     const r=x=>Math.round(x*10)/10;
-    sizeStr = (willClose && f>=0.99)
-      ? "wound closed; resurfaced with epithelial tissue"
-      : `${r(L)} x ${r(W)}${D===null?"":" x "+r(D)} cm`;
+    if (closed) sizeStr = "wound closed; resurfaced with epithelial tissue";
+    else {
+      const L=Math.max(0.1, r(L0*shrink)), W=Math.max(0.1, r(W0*shrink));
+      const D=D0===null?null:(f>=0.45?0:r(D0*(1-f*2)));   // depth resolves ~mid-episode
+      sizeStr = `${L} x ${W}${D===null?"":" x "+(D<=0?"0":D)} cm` + (shrink>=0.97&&f>0.05?" (no significant change from prior visit)":"");
+    }
   }
-  // Wound bed / drainage / periwound by healing stage
-  let bed, drainage, edges;
-  if (willClose && f>=0.99) {
-    bed="fully epithelialized, no open area remaining"; drainage="none"; edges="closed, flush with surrounding skin";
-  } else if (f<0.25) {
-    bed="pink-red base with scattered yellow slough, early granulation forming"; drainage="scant-to-moderate serous"; edges="defined, no undermining or tunneling noted";
-  } else if (f<0.55) {
-    bed="increasing beefy-red granulation tissue covering an estimated 60-75% of the wound bed"; drainage="scant serous"; edges="contracting, no maceration";
-  } else if (f<0.85) {
-    bed="healthy granulation with advancing epithelial tissue at wound margins"; drainage="scant serous, decreasing"; edges="epithelializing, periwound intact";
+  // Drainage improves BEFORE size; bed evolves slough → granulation → epithelium
+  let bed, drainage, edges, careMode;
+  if (closed) {
+    bed="fully epithelialized, no open area remaining"; drainage="none";
+    edges="closed; new epithelial tissue fragile, surrounding skin intact";
+    careMode="HEALED — NO open-wound cleansing/dressing. Skin integrity monitoring, moisture control, friction protection, recurrence-prevention teaching only.";
+  } else if (nearlyHealed) {
+    bed="nearly epithelialized with only a small superficial open area remaining"; drainage="none observed this visit";
+    edges="well-approximated; periwound skin intact without erythema or maceration";
+    careMode="NEARLY HEALED — minimal protective dressing/skin barrier per order; focus on protection, moisture control, monitoring for reopening, and recurrence-prevention teaching. Reduce full open-wound care language.";
+  } else if (f < 0.3) {
+    bed="pink-red base with scattered yellow slough, early granulation forming"; drainage=(f<0.15?"moderate serous":"scant-to-moderate serous, decreasing");
+    edges="defined, no undermining or tunneling noted";
+    careMode="OPEN WOUND — full wound care per physician order (cleansing, barrier, dressing exactly as ordered).";
+  } else if (f < 0.7) {
+    bed="increasing beefy-red granulation tissue covering an estimated 60-80% of the wound bed"; drainage="scant serous";
+    edges="contracting, no maceration; periwound stable";
+    careMode="OPEN WOUND — full wound care per physician order; document treatment effectiveness.";
   } else {
-    bed="predominantly epithelialized with small remaining superficial open area"; drainage="none noted this visit"; edges="well-approximated, periwound skin intact without erythema or maceration";
+    bed="healthy granulation with advancing epithelial tissue at wound margins"; drainage="scant, decreasing to none on some visits";
+    edges="epithelializing; periwound skin intact";
+    careMode="LATE HEALING — wound care per order; begin shifting teaching toward protection and prevention.";
   }
-  return { sizeStr, bed, drainage, edges, closed: willClose && f>=0.99 };
+  return { sizeStr, bed, drainage, edges, closed, nearlyHealed, band, careMode };
 }
 
 // RULE 1: Single normalized assistive device — 485 DME/Activities Permitted is the source
@@ -1061,17 +1118,19 @@ export default function App() {
         // Discharge ONLY on the last note, and only if dischargeOn
         const isLast = dischargeOn && (i === visits.length-1);
         const phase = getVisitPhase(i, total, dischargeOn, isLast);
-        const painLevel = getPainLevelByVisit(i, total);
         const dayIdx = uniqueDays.indexOf(dk);
+        const painLevel = getPainLevelByVisit(dayIdx, uniqueDays.length, poc, phase);
         const obs = getObsForVisit(dayIdx, 3, poc);
         // Wound mode: teaching rotates through WOUND_TEACHING (skip BS topic for non-diabetics)
-        const wtPool = WOUND_TEACHING.filter(t => poc.isDiabetic || !t[0].includes("BLOOD SUGAR"));
-        const wt = wtPool[dayIdx % wtPool.length];
+        // Wound stage band drives teaching + care wording (computed from the first wound's trajectory)
+        const wprog0 = woundMode ? getWoundProgress(woundList[0]||{}, dayIdx, uniqueDays.length, dischargeOn) : null;
+        const wband = wprog0 ? wprog0.band : "early";
+        const wt = getWoundTeaching(wband, dayIdx, poc.isDiabetic);
         // Per-day wound trajectory (review fixes #1+#4): same-day AM/PM share the same findings
         let woundFindingsStr = "not applicable", necessityStr = "not applicable";
         if (woundMode) {
           woundFindingsStr = woundList.map((w, wi) => {
-            const p = getWoundProgress(w, dayIdx, uniqueDays.length, dischargeOn);
+            const p = wi === 0 ? wprog0 : getWoundProgress(w, dayIdx, uniqueDays.length, dischargeOn);
             const parts = [`Wound #${wi+1} (${w.location||"per POC"})`];
             if (p.sizeStr) parts.push("measurement: " + p.sizeStr);
             parts.push("wound bed: " + p.bed);
@@ -1116,14 +1175,15 @@ export default function App() {
         }
 
         const prevNote = prevTopics.length>0 ? ` Previously covered: ${prevTopics.slice(-3).join(", ")}. Use different phrasing.` : "";
-        // BID notes add a ~80-word injection paragraph, so keep the AI base shorter
-        // → total ≈ a normal note (fits one page at full font size).
+        // BID notes add a ~80-word injection paragraph → shorter AI base keeps
+        // the total ≈ a normal note (fits one page at full font size).
         const wordTarget = useInjection ? "120-190" : "180-320";
         const basePrompt = woundMode ? WOUND_NOTE_PROMPT : NOTE_PROMPT;
         const prompt=basePrompt
           .replace(/\{WORDS\}/g,wordTarget)
           .replace(/\{WTOPIC\}/g, wt[1])
           .replace(/\{WOUNDS\}/g, woundsStr)
+          .replace(/\{WSTAGE\}/g, wprog0 ? wprog0.careMode : "not applicable")
           .replace(/\{WFINDINGS\}/g, woundFindingsStr)
           .replace(/\{WNECESSITY\}/g, necessityStr)
           .replace(/\{WORDER\}/g, woundOrder || "wound care per plan of care (no specific order text — use conservative wording)")
@@ -1188,6 +1248,10 @@ export default function App() {
         if (!dayCache[dk]) dayCache[dk] = { topic, intervention };
 
         const vs = pickVS();
+        // §5: generated O2 must stay within the POC's safe range — never create an
+        // abnormal value and ignore it. (Abnormals only via manual entry.)
+        const o2th = parseInt(poc.o2Threshold);
+        if (!isNaN(o2th) && parseInt(vs.o2) < o2th + 1) vs.o2 = String(Math.min(98, o2th + 2 + (dayIdx % 3)));
         setPreviewVS(vs);
         // BID diabetic BS logic: AM (fasting) lower, PM higher — always non-reportable
         if (poc.isDiabetic) {
@@ -1259,7 +1323,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 9, ready: true,
+      version: 10, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
