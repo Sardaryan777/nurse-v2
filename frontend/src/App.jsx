@@ -1008,7 +1008,25 @@ export default function App() {
     // Build the visit list: bulk entries take priority; else calendar dates; else AM/PM expansion
     let visits = [];
     if (bulkEntries.length > 0) {
-      visits = bulkEntries.map(e => ({ date: e.date, dk: fmtDate(e.date), timeIn: e.timeIn, timeOut: e.timeOut }));
+      // Sort chronologically (date, then time) so "last note" = chronologically last visit.
+      // Guarantees discharge/pre-discharge lands on the true final date even if the
+      // pasted lines were out of order.
+      const timeToMinutes = (t) => {
+        if (!t) return 0;
+        const m = String(t).match(/(\d{1,2}):(\d{2})\s*([APap][Mm])?/);
+        if (!m) return 0;
+        let h = parseInt(m[1]), mins = parseInt(m[2]);
+        const ap = (m[3]||"").toUpperCase();
+        if (ap === "PM" && h !== 12) h += 12;
+        if (ap === "AM" && h === 12) h = 0;
+        return h*60 + mins;
+      };
+      const sortedBulk = [...bulkEntries].sort((a,b) => {
+        const d = a.date - b.date;
+        if (d !== 0) return d;
+        return timeToMinutes(a.timeIn) - timeToMinutes(b.timeIn);
+      });
+      visits = sortedBulk.map(e => ({ date: e.date, dk: fmtDate(e.date), timeIn: e.timeIn, timeOut: e.timeOut, nurseName: e.nurseName||"" }));
     } else if (dates.length > 0) {
       const sorted = [...dates].sort((a,b)=>a-b);
       if (autoAMPM) {
@@ -1323,7 +1341,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 10, ready: true,
+      version: 11, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
