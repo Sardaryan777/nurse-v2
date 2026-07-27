@@ -219,7 +219,7 @@ VISIT CONTEXT:
 - Assistive device: {DEVICE}  (CONSISTENCY RULE: mention ONLY this device in ALL narrative — never any other device; if "none", never mention any ambulation device)
 - Edema: {EDEMA}  (CONSISTENCY RULE: if "none documented", NEVER mention edema anywhere in the note)
 - SOB level: {SOBLEVEL}  (CONSISTENCY RULE: use this EXACT exertion level in narrative — never change severity)
-- Mental status: {MENTAL}  (CONSISTENCY RULE: narrative must match these exact findings — do not add or drop alert/oriented)
+- Mental status: {MENTAL}  (CONSISTENCY RULE: narrative must match these EXACT findings. If "alert" is NOT listed, never write "alert" or "alert and oriented" — write only what is listed. If "oriented" is not listed, never write "oriented".)
 - Mobility status: {MOBILITY}  (if BEDBOUND: NEVER write that patient stood, walked, ambulated, or used a walker/cane — patient is on complete bedrest; pain wording must use "increased with repositioning and turning" instead of standing/ambulation)
 {INJECTION_INFO}
 
@@ -241,7 +241,7 @@ BLOCK 3 — Teaching (4-6 sentences) on {TOPIC}, individualized to the patient's
 
 BLOCK 4 — MD/911 (1-2 sentences): when to notify MD (worsening pain, uncontrolled BP, new dizziness, falls, signs of infection, change in condition) and call 911 (chest pain, severe breathing difficulty, stroke symptoms, loss of consciousness, serious fall injury).
 
-RULES: Never write his/her, he/she, s/he, their, or [placeholders]. Never say "evaluation and assessment of all body systems" (RN-level) — use LVN wording (observed, monitored, reviewed, reinforced). Vary wording from prior notes. IF PHASE IS FINAL_DISCHARGE: do NOT write "continues to require skilled observation", "continued skilled teaching", "needs further assessment", "requires follow-up teaching", or "continue plan of care" — instead state that skilled nursing goals have been met / maximum benefit achieved and patient is appropriate for discharge. Return ONLY the paragraph text, no block labels.`;
+RULES: Never write his/her, he/she, s/he, their, or [placeholders]. Never say "evaluation and assessment of all body systems" (RN-level) — use LVN wording (observed, monitored, reviewed, reinforced). Vary wording from prior notes. MEDICARE RULE — IF PHASE IS **NOT** FINAL_DISCHARGE: this is a regular skilled nursing progress note. Document progress toward goals (better pain control, improving medication compliance, improving understanding, fall precautions and disease management reinforced) and that skilled observation continues. NEVER write discharge, discharge planning, discharge readiness, preparing for discharge, anticipated discharge, or "appropriate for discharge" in any non-final note. IF PHASE IS FINAL_DISCHARGE: this is the FINAL skilled nursing visit — document goals met / maximum benefit achieved, final teaching completed, discharge instructions reviewed, patient/caregiver verbalized understanding; do NOT write "continues to require skilled observation", "continued skilled teaching", "needs further assessment", "requires follow-up teaching", or "continue plan of care" — instead state that skilled nursing goals have been met / maximum benefit achieved and patient is appropriate for discharge. Return ONLY the paragraph text, no block labels.`;
 
 // ── WOUND NOTE PROMPT ─────────────────────────────────────────────────────────
 const WOUND_NOTE_PROMPT = `You are an experienced LVN writing a home health WOUND CARE visit note INTERVENTION section. Write real, concise skilled documentation — 180-280 words for a routine visit. Only go up to 400 words when clinically justified (discharge/final note, wound worsening, abnormal vitals, MD/RN notification, caregiver re-demonstration). Not every note should be long — over-detailed routine notes look generated.
@@ -273,7 +273,7 @@ Write ONE flowing intervention with this structure:
 6. Close: homebound status + "Plan is to continue skilled nursing visits for wound care, assessment, and teaching per plan of care." (unless FINAL_DISCHARGE phase — then goals met / appropriate for discharge wording).
 
 DISCHARGE CONSISTENCY (critical audit rule): the final discharge note's wound findings and goal statements must AGREE. If {WFINDINGS} shows the wound closed/epithelialized → document closure AND "wound care goals met". Only make goal-met claims that the documented findings support.
-RULES: Write like a real nurse charting a real patient — natural, specific, varied. Open sentences differently in each note; never reuse identical phrasing from prior notes; let the wound findings tell a believable healing story visit to visit. LVN wording only (observed, monitored, performed, reinforced). Never his/her, s/he, their, [placeholders]. IF PHASE IS FINAL_DISCHARGE: include final wound assessment summary, do NOT write "continue plan of care" — write skilled nursing goals met / maximum benefit achieved and appropriate for discharge. Return ONLY the paragraph text.`;
+RULES: Write like a real nurse charting a real patient — natural, specific, varied. Open sentences differently in each note; never reuse identical phrasing from prior notes; let the wound findings tell a believable healing story visit to visit. LVN wording only (observed, monitored, performed, reinforced). Never his/her, s/he, their, [placeholders]. MEDICARE RULE — IF PHASE IS NOT FINAL_DISCHARGE: never mention discharge, discharge planning, or discharge readiness; document wound progress and continued skilled need only. IF PHASE IS FINAL_DISCHARGE: this is the FINAL skilled nursing visit — include final wound assessment summary, final teaching completed, discharge instructions reviewed, do NOT write "continue plan of care" — write skilled nursing goals met / maximum benefit achieved and appropriate for discharge. Return ONLY the paragraph text.`;
 
 // ── VARIATION PROMPT ──────────────────────────────────────────────────────────
 const VARIATION_PROMPT = `Rewrite this nursing intervention paragraph with COMPLETELY DIFFERENT wording, sentence structure, and phrasing. Keep ALL the same clinical meaning and actions. Use synonyms throughout. Change sentence order. Must sound like a different nurse wrote it on a different day. Return ONLY the rewritten text, nothing else.
@@ -301,15 +301,17 @@ function getPainLevelByVisit(dayIdx, totalDays, poc, phase) {
   let lvl = pat[(dayIdx + shift) % pat.length];
   // Late-episode bias downward (healing/teaching effect) — still varies, never flat
   const f = totalDays <= 1 ? 0 : dayIdx / (totalDays - 1);
-  if (f > 0.75) lvl = Math.min(lvl, supported ? 3 : 2);
-  if (phase === "FINAL_DISCHARGE" || phase === "PRE_DISCHARGE") lvl = Math.min(lvl, 2);
+  if (f > 0.75) lvl = Math.min(lvl, 2);                       // late visits: 1-2 only
+  // Discharge / goals-met visits: mostly 1-2, alternating so it never reads flat
+  if (phase === "FINAL_DISCHARGE") lvl = 1;   // goals met — minimal pain on the final visit
   return Math.max(1, lvl);
 }
 
 // Visit phase based on position in episode
+// MEDICARE RULE: discharge language appears ONLY in the final chronological visit.
+// Every earlier note is a regular skilled nursing progress note (no PRE_DISCHARGE phase).
 function getVisitPhase(index, totalVisits, dischargeOn, isLast) {
   if (isLast && dischargeOn) return "FINAL_DISCHARGE";
-  if (dischargeOn && totalVisits > 2 && index >= totalVisits - 2) return "PRE_DISCHARGE";
   if (totalVisits <= 1) return "EARLY";
   const p = index / (totalVisits - 1);
   if (p < 0.34) return "EARLY";
@@ -687,14 +689,12 @@ function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topi
     if (hasGU) items.push("urinary symptom reporting parameters");
     const itemList = items.join(", ") + ", and when to notify MD or call 911";
     if (cg) {
-      responseText = `${bh(true)}Patient${bh(true)}PCG Patient/caregiver verbalized understanding of ${itemList}. Patient remains forgetful and requires caregiver support for safety and medication organization; however, skilled nursing goals have been met / maximum benefit achieved per plan of care, and caregiver is able to assist with ongoing care needs. Patient is appropriate for discharge from skilled nursing services at this time.`;
+      responseText = `${bh(true)}Patient${bh(true)}PCG Final skilled nursing visit completed. Final teaching and discharge instructions were reviewed; patient/caregiver verbalized understanding of ${itemList}. Patient remains forgetful and requires caregiver support for safety and medication organization; however, skilled nursing goals have been met / maximum benefit achieved per plan of care, and caregiver is able to assist with ongoing care needs. Patient is appropriate for discharge from skilled nursing services at this time.`;
     } else {
-      responseText = `${bh(true)}Patient${bh(false)}PCG Patient verbalized understanding of ${itemList}. Skilled nursing goals have been met / maximum benefit achieved per plan of care. Patient is appropriate for discharge from skilled nursing services at this time.`;
+      responseText = `${bh(true)}Patient${bh(false)}PCG Final skilled nursing visit completed. Final teaching and discharge instructions were reviewed; patient verbalized understanding of ${itemList}. Skilled nursing goals have been met / maximum benefit achieved per plan of care. Patient is appropriate for discharge from skilled nursing services at this time.`;
     }
-  } else if (phase === "PRE_DISCHARGE") {
-    responseText = `${bh(true)}Patient${bh(cg)}PCG ${subj} verbalized fair understanding of discharge planning instructions. Patient continues to require ${cg?"caregiver support and ":""}reinforcement due to forgetfulness and fall risk. Discharge readiness will be evaluated by RN.`;
   } else if (phase === "LATE") {
-    responseText = `${bh(true)}Patient${bh(cg)}PCG ${subj} verbalized improved understanding of disease management, medication safety, and fall precautions.${cg?" Caregiver remains involved due to patient's forgetfulness and safety risk.":""} Patient continues to require skilled observation and reinforcement.`;
+    responseText = `${bh(true)}Patient${bh(cg)}PCG ${subj} demonstrated continued progress toward established goals. Pain is better controlled with current measures, medication compliance has improved, and ${subj.toLowerCase()} verbalized improved understanding of disease management, medication safety, and fall precautions. Fall precautions and disease management were reinforced this visit.${cg?" Caregiver remains involved and supportive of the plan of care.":""} Patient continues to require skilled observation and reinforcement.`;
   } else if (phase === "MIDDLE") {
     responseText = `${bh(true)}Patient${bh(cg)}PCG ${subj} demonstrated improved recall of prior instructions but continued to require cueing and reinforcement due to forgetfulness and chronic disease complexity. Continued skilled teaching and follow-up indicated.`;
   } else {
@@ -704,18 +704,16 @@ function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topi
   // Phase-aware Plan
   let planText;
   if (phase === "FINAL_DISCHARGE") {
-    planText = `Discharge from skilled nursing services. ${subj} instructed to continue medications as ordered, follow prescribed diet, maintain fall precautions, use assistive device as needed, follow up with MD as scheduled, and report any change in condition promptly.`;
-  } else if (phase === "PRE_DISCHARGE") {
-    planText = "Continue plan of care as approved by MD. Discharge planning discussed; RN to assess discharge readiness as indicated.";
+    planText = `DISCHARGE PLAN: Discharge from skilled nursing services. ${subj} instructed to continue medications as ordered, follow prescribed diet, maintain fall precautions, use assistive device as needed, follow up with MD as scheduled, and report any change in condition promptly.`;
+
   } else {
     planText = "Continue plan of care as approved by MD.";
   }
 
   // Communication section (phase-aware)
+  // MEDICARE RULE: RN/Supervisor discharge communication ONLY on the final visit.
   const isFinalDC = phase === "FINAL_DISCHARGE";
-  // Discharge planning is triggered by phase OR by the teaching topic mentioning discharge
-  const topicMentionsDischarge = String(topic||"").toUpperCase().includes("DISCHARGE");
-  const isDischargePlanning = (isFinalDC || phase === "PRE_DISCHARGE" || topicMentionsDischarge);
+  const isDischargePlanning = isFinalDC;
   const commRN = isDischargePlanning;   // RN checked on any discharge planning / final discharge note
   const commSup = isDischargePlanning;  // Supervisor checked on any discharge planning / final discharge note
   const commRe = isDischargePlanning ? "DISCHARGE PLANNING / RN NOTIFIED" : "";
@@ -1166,8 +1164,7 @@ export default function App() {
         const topic = woundMode
           ? (isLast ? "WOUND CARE & DISCHARGE PLANNING" : "WOUND CARE — " + wt[0])
           : (isLast ? "MEDICATION SAFETY & DISCHARGE PLANNING"
-              : (phase==="PRE_DISCHARGE" ? "DISCHARGE PLANNING & READINESS REVIEW"
-              : (dayCache[dk]?.topic || topics[dayIdx%topics.length] || "DISEASE PROCESS & MANAGEMENT")));
+              : (dayCache[dk]?.topic || topics[dayIdx%topics.length] || "DISEASE PROCESS & MANAGEMENT"));
         setGenStatus(`Generating note ${i+1}/${total}: ${topic}...`);
 
         const diagStr=(poc.diagnoses||[]).slice(0,8).join(", ");
@@ -1255,6 +1252,41 @@ export default function App() {
             intervention = injText + " " + intervention;
           }
         }
+        // CONSISTENCY NET: mental-status narrative must match the checkboxes.
+        // If Alert is not checked (ms.alert === false), the narrative may never say "alert".
+        if ((poc.mentalStatus||{}).alert === false) {
+          intervention = intervention
+            .replace(/\balert and oriented\b/gi, "oriented")
+            .replace(/\boriented and alert\b/gi, "oriented")
+            .replace(/\bawake,?\s*alert,?\s*and oriented\b/gi, "oriented")
+            .replace(/\balert,?\s*oriented\b/gi, "oriented")
+            .replace(/\b(p)atient (?:was |is |remained |remains )?alert\b/gi, (m,p)=> (p===p.toUpperCase()?"Patient":"patient")+" was oriented")
+            .replace(/\s{2,}/g, " ").trim();
+        }
+        // If Oriented is not checked, the narrative may never say "oriented".
+        if ((poc.mentalStatus||{}).oriented === false) {
+          intervention = intervention
+            .replace(/\balert and oriented\b/gi, "alert")
+            .replace(/\boriented and alert\b/gi, "alert")
+            .replace(/\b(p)atient (?:was |is |remained |remains )?oriented(?: to person, place, and time)?\b/gi, (m,p)=> (p===p.toUpperCase()?"Patient":"patient")+"'s orientation status monitored")
+            .replace(/\s{2,}/g, " ").trim();
+        }
+
+        // MEDICARE SAFETY NET: no discharge wording may appear before the final visit
+        if (phase !== "FINAL_DISCHARGE") {
+          intervention = intervention
+            .replace(/[^.]*\bdischarge (?:planning|readiness)\b[^.]*\.\s*/gi, "")
+            .replace(/[^.]*\bpreparing for discharge\b[^.]*\.\s*/gi, "")
+            .replace(/[^.]*\banticipated discharge\b[^.]*\.\s*/gi, "")
+            .replace(/[^.]*\bappropriate for discharge\b[^.]*\.\s*/gi, "")
+            .replace(/[^.]*\bassess discharge\b[^.]*\.\s*/gi, "")
+            .replace(/[^.]*\bdischarge from skilled nursing\b[^.]*\.\s*/gi, "")
+            .replace(/[^.]*\bfinal (?:visit|skilled nursing visit)\b[^.]*\.\s*/gi, "")
+            .replace(/[^.]*\bgoals (?:have been |were )?met\b[^.]*\.\s*/gi, "")
+            .replace(/[^.]*\bmaximum benefit\b[^.]*\.\s*/gi, "")
+            .replace(/\s{2,}/g, " ").trim();
+        }
+
         // Safety net: remove ongoing-care contradictions from final discharge notes
         if (phase === "FINAL_DISCHARGE") {
           intervention = intervention
@@ -1346,7 +1378,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 13, ready: true,
+      version: 14, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
