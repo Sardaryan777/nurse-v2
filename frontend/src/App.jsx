@@ -882,7 +882,7 @@ ${bh(poc.hasParalysis||false)}Paralysis UE / LE / both ${bh(!poc.isBedbound&&(!!
 ${bh(hbf.taxingEffort!==false)} Others: requires considerable and taxing efforts to leave home even with assistance from caregiver.
 </div>
 
-<div class="sec"><b>ASSESSMENTS:</b> (Problems/Significant Findings) Teaching done regarding <b>${phase==="FINAL_DISCHARGE"?"DISCHARGE FROM SKILLED NURSING SERVICES":topic}</b></div>
+<div class="sec"><b>ASSESSMENTS:</b> (Problems/Significant Findings) Teaching done regarding <b>${phase==="FINAL_DISCHARGE"?"MEDICATION SAFETY & DISCHARGE PLANNING":topic}</b></div>
 
 <div class="sec intv"><b>INTERVENTIONS:</b> <i>(Specific to problems identified and who was given the instructions)</i> ${intervention}</div>
 
@@ -997,6 +997,9 @@ export default function App() {
       if(s===-1||e===-1) throw new Error("No JSON in response");
       const data = JSON.parse(raw.slice(s,e+1));
       setPoc(data);
+      // RECERT / DC episodes end with a discharge note on the final visit —
+      // auto-enable so the last date is always the DC / goals-met note.
+      if (/recert|discharge|\bdc\b/i.test(String(data.stage||""))) setDischargeOn(true);
     } catch(err){ setError("Extraction error: "+err.message); }
     finally { setExtracting(false); }
   };
@@ -1343,7 +1346,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 12, ready: true,
+      version: 13, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
