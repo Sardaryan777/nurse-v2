@@ -1103,7 +1103,9 @@ export default function App() {
 
     setGenerating(true); setError(null); setNotes([]);
     try {
-      const topics = poc.teachingTopics||[];
+      // Regular rotation must NEVER include discharge topics — those are reserved
+      // for the chronologically-final visits (PRE_DISCHARGE / FINAL_DISCHARGE phases).
+      const topics = (poc.teachingTopics||[]).filter(t => !/discharge/i.test(t));
       const total = visits.length;
       const generated = [];
       const prevTopics = [];
@@ -1341,7 +1343,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 11, ready: true,
+      version: 12, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
