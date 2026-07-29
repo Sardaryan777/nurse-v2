@@ -26,17 +26,45 @@ const VITAL_SIGNS_DB = [
 ];
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
+// ── APPROVED VITALS POOLS ────────────────────────────────────────────────────
+// BP: 150 approved values. O2: 94-98% RA only (never auto-generate 92-93).
+// Pools are shuffled and drawn without replacement so values never repeat back-to-back
+// and a long series never looks copied.
+const BP_LIST = ["128/78","116/72","132/81","109/68","124/76","118/74","130/79","112/70","126/77","121/73","134/82","115/69","129/80","110/66","123/75","117/71","131/78","113/72","127/76","120/74","133/81","108/67","125/79","119/70","130/82","114/68","122/77","116/73","128/75","111/69","134/80","121/76","126/74","118/72","132/79","109/65","124/78","115/71","129/77","113/70","131/83","120/75","127/80","112/68","123/72","117/74","133/79","110/67","125/76","119/73","130/81","114/70","128/79","116/69","122/75","111/71","134/83","121/77","126/78","118/73","132/80","109/66","124/74","115/72","129/81","113/69","131/77","120/71","127/79","112/70","123/76","117/68","133/82","110/69","125/75","119/72","130/78","114/71","128/80","116/70","122/73","111/67","134/81","121/75","126/79","118/71","132/82","109/68","124/77","115/70","129/78","113/71","131/80","120/72","127/75","112/69","123/74","117/73","133/80","110/68","125/78","119/71","130/79","114/69","128/76","116/72","122/74","111/70","134/82","121/73","126/80","118/69","132/78","109/67","124/75","115/73","129/79","113/68","131/81","120/74","127/77","112/71","123/78","117/70","133/83","110/66","125/74","119/76","130/80","114/72","128/77","116/68","122/76","111/69","134/79","121/74","126/81","118/70","132/77","109/69","124/80","115/67","129/76","113/73","131/79","120/70","127/78","112/72","123/71","117/75"];
+const O2_LIST = [94,95,96,97,98];
+let _bpPool = [], _lastO2 = null;
+function drawBP() {
+  if (_bpPool.length === 0) {
+    _bpPool = BP_LIST.slice();
+    for (let i = _bpPool.length - 1; i > 0; i--) {           // Fisher-Yates shuffle
+      const j = Math.floor(Math.random() * (i + 1));
+      [_bpPool[i], _bpPool[j]] = [_bpPool[j], _bpPool[i]];
+    }
+  }
+  return _bpPool.pop();
+}
+function drawO2() {
+  let v = O2_LIST[Math.floor(Math.random() * O2_LIST.length)];
+  if (v === _lastO2) v = O2_LIST[(O2_LIST.indexOf(v) + 1 + Math.floor(Math.random()*3)) % O2_LIST.length];
+  _lastO2 = v;
+  return v;
+}
+// Weight varies +/-2 lbs around the 485 base weight (never more)
+function varyWeight(base) {
+  const m = String(base||"").match(/([\d.]+)/);
+  if (!m) return String(base||"");
+  const n = parseFloat(m[1]);
+  const delta = Math.floor(Math.random()*5) - 2;             // -2..+2
+  const out = Math.max(1, Math.round(n + delta));
+  return String(base).replace(m[1], String(out));
+}
 function pickVS() {
   const line = VITAL_SIGNS_DB[Math.floor(Math.random() * VITAL_SIGNS_DB.length)];
   const t = line.match(/T\s+([\d.]+)/);
   const hr = line.match(/HR\s+(\d+)/);
   const rr = line.match(/RR\s+(\d+)/);
-  const bp = line.match(/BP Sitting\s+([\d/]+)/);
-  // Random blood sugar 90-210 mg/dL for diabetic patients
-  const bs = Math.floor(100 + Math.random()*80); // 100-180 mg/dL, away from report thresholds
-  const O2_LIST = [97,95,92,96,93,97,92,96,96,94,93,95,94,97,93,96,94,93,92,94,97,92,94,95,93,94,93,95,95,95,97,96,97,97,93,97,97,94,94,95,96,97,92,96,95,96,94,97,92,96,94,92,95,97,92,96,93,96,92,96,96,92,92,92,93,95,97,95,93,96,95,94,95,94,92,97,93,92,95,92,92,96,95,92,92,92,96,93,96,92,95,93,95,97,93,96,96,96,92,94];
-  const o2 = O2_LIST[Math.floor(Math.random()*O2_LIST.length)];
-  return { temp: t?.[1]||"98.0", hr: hr?.[1]||"76", rr: rr?.[1]||"18", bp: bp?.[1]||"128/80", bs: String(bs), o2: String(o2) };
+  const bs = Math.floor(100 + Math.random()*80);             // 100-180 mg/dL
+  return { temp: t?.[1]||"98.0", hr: hr?.[1]||"76", rr: rr?.[1]||"18", bp: drawBP(), bs: String(bs), o2: String(drawO2()) };
 }
 function parseVL(line) { return pickVS(); } // compat
 function fmtDate(d) { if(!d)return""; return `${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}/${d.getFullYear()}`; }
@@ -867,7 +895,7 @@ ${bh(true)} ID/insurance ,Face</div>
 <div class="right">
 <div class="sec">
 <b>Vital Signs</b>: T: <u>${vs.temp}</u> HR:<u>${vs.hr}</u>bpm &nbsp;RR: <u>${vs.rr}</u>/min BS ${poc.isDiabetic?`<u>${vs.bs}</u>mg/dL`:`<span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span>`} F${bh(false)}R${bh(false)} Repeat <span style="border-bottom:1px solid #000;display:inline-block;width:22px"></span><br>
-BP: <b>R / L</b> Lying <span style="border-bottom:1px solid #000;display:inline-block;width:16px"></span> Sitting <u>${vs.bp}</u>mmHg${poc.bpArmRestriction==="right"?" (L arm)":poc.bpArmRestriction==="left"?" (R arm)":""} &nbsp;Standing <span style="border-bottom:1px solid #000;display:inline-block;width:28px"></span> &nbsp;Repeat: <span style="border-bottom:1px solid #000;display:inline-block;width:18px"></span>mmHg &nbsp;Wt: <u>${poc.patient?.weight||poc.weight||""}</u>
+BP: <b>R / L</b> Lying <span style="border-bottom:1px solid #000;display:inline-block;width:16px"></span> Sitting <u>${vs.bp}</u>mmHg${poc.bpArmRestriction==="right"?" (L arm)":poc.bpArmRestriction==="left"?" (R arm)":""} &nbsp;Standing <span style="border-bottom:1px solid #000;display:inline-block;width:28px"></span> &nbsp;Repeat: <span style="border-bottom:1px solid #000;display:inline-block;width:18px"></span>mmHg &nbsp;Wt: <u>${vs.weight||poc.patient?.weight||poc.weight||""}</u>
 </div>
 
 <div class="sec">
@@ -1303,6 +1331,16 @@ export default function App() {
         if (!dayCache[dk]) dayCache[dk] = { topic, intervention };
 
         const vs = pickVS();
+        // Weight varies +/-2 lbs around the 485 base weight (unless POC fixes it)
+        vs.weight = poc.fixedWeight ? (poc.patient?.weight||poc.weight||"") : varyWeight(poc.patient?.weight||poc.weight||"");
+        // BP safety: keep generated values inside the POC's notify thresholds
+        {
+          const bpm = String(vs.bp).match(/(\d+)\/(\d+)/);
+          if (bpm) {
+            const sys = parseInt(bpm[1]), dia = parseInt(bpm[2]);
+            if (sys > 160 || sys < 90 || dia > 90 || dia < 60) vs.bp = "124/76";
+          }
+        }
         // §5: generated O2 must stay within the POC's safe range — never create an
         // abnormal value and ignore it. (Abnormals only via manual entry.)
         const o2th = parseInt(poc.o2Threshold);
@@ -1378,7 +1416,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 14, ready: true,
+      version: 15, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
