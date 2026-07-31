@@ -28,7 +28,32 @@ function parseJSON(text) {
   for (const a of attempts) {
     try { return JSON.parse(a); } catch { /* try next */ }
   }
+
+  // Last resort: the response was TRUNCATED mid-list (long schedules can hit the
+  // output-token cap). Salvage every complete {...} visit object we did receive
+  // and rebuild valid JSON from them, rather than losing the whole email.
+  const salvaged = repairTruncated(t.slice(s));
+  if (salvaged) return salvaged;
+
   throw new Error("Could not parse JSON from Claude response: " + body.slice(0, 300));
+}
+
+// Rebuild usable JSON from a truncated response: keep the top-level nurseName
+// and every fully-formed visit object, discarding the incomplete tail.
+function repairTruncated(raw) {
+  try {
+    const nurseMatch = raw.match(/"nurseName"\s*:\s*"([^"]*)"/);
+    const visitRe = /\{[^{}]*"date"\s*:\s*"[^"]+"[^{}]*\}/g;
+    const visits = [];
+    let m;
+    while ((m = visitRe.exec(raw)) !== null) {
+      try { visits.push(JSON.parse(m[0])); } catch { /* skip malformed */ }
+    }
+    if (!visits.length) return null;
+    return { nurseName: nurseMatch ? nurseMatch[1] : "", visits, _truncated: true };
+  } catch {
+    return null;
+  }
 }
 
 // Extract ONLY the agency name from the PDF.
@@ -68,7 +93,9 @@ export async function extractVisitsFromEmail(bodyText) {
   const today = new Date();
   const resp = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 4000,
+    // Long schedules (100+ visits, each with its own nurse) produce a lot of
+    // JSON — keep plenty of headroom so the list is never cut off mid-array.
+    max_tokens: 32000,
     temperature: 0,
     system:
       "You parse scheduling emails for a home-health nursing service. " +
@@ -90,6 +117,9 @@ export async function extractVisitsFromEmail(bodyText) {
   });
   const text = (resp.content || []).map(b => b.text || "").join("");
   const data = parseJSON(text);
+  if (data._truncated) {
+    console.log(`  WARNING: schedule response was truncated — salvaged ${(data.visits||[]).length} complete visit(s). Some later dates may be missing.`);
+  }
   const visits = Array.isArray(data.visits) ? data.visits : [];
   const defaultNurse = (data.nurseName || "").trim();
   // Fill blanks with the default nurse so every visit ends up with a name when possible.
