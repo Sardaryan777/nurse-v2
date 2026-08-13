@@ -85,21 +85,25 @@ export async function getMessageDetails(gmail, messageId) {
 
   // first PDF attachment
   let pdf = null;
-  const pdfPart = parts.find(p =>
+  // Correction emails can carry TWO PDFs (the generated notes + the 485), so
+  // collect them all. `pdf` stays the first one for the normal new-notes path.
+  const pdfs = [];
+  const pdfParts = parts.filter(p =>
     (p.mimeType === "application/pdf" || (p.filename || "").toLowerCase().endsWith(".pdf")) &&
     p.body?.attachmentId
   );
-  if (pdfPart) {
+  for (const part of pdfParts) {
     const att = await gmail.users.messages.attachments.get({
       userId: "me",
       messageId,
-      id: pdfPart.body.attachmentId
+      id: part.body.attachmentId
     });
-    pdf = {
-      filename: pdfPart.filename || "document.pdf",
+    pdfs.push({
+      filename: part.filename || "document.pdf",
       buffer: Buffer.from(att.data.data.replace(/-/g, "+").replace(/_/g, "/"), "base64")
-    };
+    });
   }
+  pdf = pdfs[0] || null;
 
   return {
     id: messageId,
@@ -110,7 +114,8 @@ export async function getMessageDetails(gmail, messageId) {
     messageIdHeader: headerVal(headers, "Message-ID"),
     references: headerVal(headers, "References"),
     bodyText,
-    pdf
+    pdf,
+    pdfs
   };
 }
 

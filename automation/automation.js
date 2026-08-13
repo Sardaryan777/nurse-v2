@@ -21,6 +21,7 @@ import {
 import { extractAgencyName, extractVisitsFromEmail, splitTime } from "./extract.js";
 import { runGenerator, renderCorrectedBatch } from "./generator.js";
 import { parseCorrectionInstructions, applyCorrections, summarizeBatch } from "./correction.js";
+import { mapNotesPdf, splicePages, summarizePages, classifyPdfs } from "./pagesplice.js";
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const GENERATOR_URL = process.env.GENERATOR_URL;
@@ -71,11 +72,18 @@ async function processCorrection(gmail, msg) {
     batch = await findBatchInThread(gmail, msg.threadId);
     if (batch) log(`  Recovered original note batch from the email thread.`);
   }
+  // No stored batch? Fall back to PAGE-SPLICE: correct an already-delivered PDF
+  // by regenerating only the affected pages and swapping them back in.
   if (!batch || !Array.isArray(batch.notes) || !batch.notes.length) {
+    const { notesPdf, pocPdf } = classifyPdfs(msg.pdfs || []);
+    if (notesPdf) {
+      log(`  No stored batch — using page-splice on attached "${notesPdf.filename}".`);
+      return processCorrectionBySplice(gmail, msg, notesPdf, pocPdf, replyErr);
+    }
     return replyErr(
-      "Cannot apply correction: the original note file was not attached and no previous note batch was found in this email thread.\n\n" +
-      "Please reply to the email that contained the generated notes (so the batch travels with the thread), or attach the original " +
-      `"${BATCH_FILENAME}" file that came with them.`
+      "Cannot apply correction: no previous note batch was found in this email thread, and no notes PDF was attached.\n\n" +
+      "Either reply to the email that delivered the notes, or attach BOTH the generated notes PDF and the CMS-485/487 " +
+      "so the corrected pages can be rebuilt."
     );
   }
   log(`  Original batch: ${batch.notes.length} note(s).`);
@@ -131,6 +139,142 @@ async function processCorrection(gmail, msg) {
     ]
   });
   log(`  Replied with corrected PDF (${rendered.noteCount} note(s))${errors.length ? `, ${errors.length} issue(s) reported` : ""}.`);
+}
+
+// ── PAGE-SPLICE CORRECTION ──────────────────────────────────────────────────
+// For notes already delivered as a PDF. Reads the PDF to find which page holds
+// which visit, regenerates ONLY the corrected notes, and swaps those pages back
+// into the original file. Untouched pages are copied verbatim, so previously
+// approved notes cannot drift.
+async function processCorrectionBySplice(gmail, msg, notesPdf, pocPdf, replyErr) {
+  // 1. Which page is which visit?
+  let map;
+  try {
+    map = await mapNotesPdf(notesPdf.buffer);
+  } catch (err) {
+    return replyErr(`Cannot apply correction: the attached notes PDF could not be read (${err.message}). Please attach the generated notes PDF produced by this system.`);
+  }
+  log(`  Page map: ${map.pages.length} note page(s) for ${map.patient || "(unknown patient)"}.`);
+
+  // 2. Which pages do the instructions target, and what changes?
+  let parsed;
+  try {
+    parsed = await parseCorrectionInstructions(msg.bodyText || "", summarizePages(map));
+  } catch (err) {
+    return replyErr(`Cannot apply correction: the instructions could not be interpreted (${err.message}). Please restate with the visit date, time, and what should change.`);
+  }
+  const problems = [...parsed.ambiguous, ...parsed.unmatched];
+  if (!parsed.changes.length) {
+    return replyErr(
+      "Cannot apply correction: no note page matched the instructions." +
+      (problems.length ? `\n\n${problems.join("\n")}` : "") +
+      "\n\nPlease include the visit date (and time if that date has two visits) with each correction."
+    );
+  }
+
+  // 3. Rebuilding a page needs the Plan of Care.
+  if (!pocPdf) {
+    return replyErr(
+      "Cannot apply correction: the CMS-485/487 was not attached.\n\n" +
+      "To correct pages of an already-generated PDF, attach BOTH the notes PDF and the 485/487 — the corrected pages are " +
+      "rebuilt from the Plan of Care so they stay clinically consistent."
+    );
+  }
+
+  // 4. Regenerate ONLY the affected visits, carrying the original nurse/times.
+  const affected = [];
+  for (const c of parsed.changes) {
+    const src = map.pages[c.noteIndex];
+    if (!src) { problems.push(`Cannot apply correction: no note found for ${c.date || "(unspecified date)"}${c.time ? " " + c.time : ""}.`); continue; }
+    if (affected.some(a => a.src.page === src.page)) continue;   // merge dup instructions per page
+    affected.push({ src, fields: { ...(c.fields || {}) } });
+  }
+  // Fold any additional instructions for the same page together.
+  for (const c of parsed.changes) {
+    const hit = affected.find(a => a.src === map.pages[c.noteIndex]);
+    if (hit) Object.assign(hit.fields, c.fields || {});
+  }
+  if (!affected.length) return replyErr("Cannot apply correction: none of the requested dates matched a page in the attached PDF.\n\n" + problems.join("\n"));
+
+  affected.sort((a, b) => a.src.page - b.src.page);
+  log(`  Correcting ${affected.length} page(s): ${affected.map(a => `p${a.src.page} (${a.src.date})`).join(", ")}`);
+
+  const visits = affected.map(a => ({
+    date: a.src.date,
+    timeIn: a.fields.timeIn || a.src.timeIn || "",
+    timeOut: a.fields.timeOut || a.src.timeOut || "",
+    nurseName: a.fields.nurseName || a.src.nurse || ""
+  }));
+  const nurses = {};
+  for (const v of visits) if (v.nurseName) nurses[v.date] = v.nurseName;
+
+  const bid = /\bBID\b/i.test(msg.subject || "");
+  const wound = /\bwound\b/i.test(msg.subject || "");
+
+  let gen;
+  try {
+    gen = await runGenerator({
+      url: GENERATOR_URL, pdfBuffer: pocPdf.buffer, pdfFilename: pocPdf.filename,
+      agencyName: map.agencyName || "", nurseName: visits[0]?.nurseName || "",
+      visits, nurses, bid, wound
+    });
+  } catch (err) {
+    return replyErr(`Cannot apply correction: the corrected pages could not be regenerated (${err.message}).`);
+  }
+  if (!gen.batch || !gen.batch.notes?.length) {
+    return replyErr("Cannot apply correction: the corrected pages could not be regenerated from the attached 485/487.");
+  }
+
+  // 5. Pair each regenerated note with its source page by DATE (+ time when the
+  //    date repeats), never by position — the splice must not shuffle pages.
+  const hhmm = t => String(t || "").replace(/\s+/g, "").toUpperCase();
+  const pairFor = (n) => {
+    const sameDate = affected.filter(a => a.src.date === n.dk);
+    if (sameDate.length === 1) return sameDate[0];
+    return sameDate.find(a => hhmm(a.fields.timeIn || a.src.timeIn) === hhmm(n.timeIn)) || sameDate[0] || null;
+  };
+
+  // Restore each page's ORIGINAL topic/pain (so the episode's progression is
+  // preserved), then layer the user's corrections on top and rewrite the text.
+  const pageOrder = [];      // original 0-based page index, aligned to note order
+  const smallChanges = [];
+  gen.batch.notes.forEach((n, k) => {
+    const a = pairFor(n);
+    if (!a) { pageOrder.push(-1); return; }
+    pageOrder.push(a.src.page - 1);
+    const fields = {};
+    if (a.src.topic) fields.topic = a.src.topic;
+    if (a.src.painLevel != null) fields.painLevel = a.src.painLevel;
+    Object.assign(fields, a.fields);            // user's corrections win
+    smallChanges.push({ noteIndex: k, date: n.dk, time: n.timeIn, fields });
+  });
+  if (pageOrder.some(p => p < 0)) {
+    return replyErr("Cannot apply correction: a regenerated note could not be matched back to a page in the original PDF. Please specify each correction with its exact visit date and time.");
+  }
+  const { notes: fixedNotes, applied, errors } = await applyCorrections(gen.batch, { changes: smallChanges, ambiguous: [], unmatched: [] });
+
+  // 6. Render the corrected notes and splice them into the original PDF.
+  let rendered, splicedBuffer;
+  try {
+    rendered = await renderCorrectedBatch(GENERATOR_URL, { ...gen.batch, notes: fixedNotes });
+    splicedBuffer = await splicePages(notesPdf.buffer, rendered.pdfs[0].buffer, pageOrder);
+  } catch (err) {
+    return replyErr(`Cannot apply correction: the corrected pages could not be merged into the original PDF (${err.message}).`);
+  }
+
+  const outName = notesPdf.filename.replace(/\.pdf$/i, "") + "-CORRECTED.pdf";
+  let text =
+    `Hello,\n\nCorrected ${affected.length} page(s) in "${notesPdf.filename}"${parsed.summary ? ` — ${parsed.summary}` : ""}.\n\n` +
+    (applied.length ? `Applied:\n${applied.map(a => "• " + a).join("\n")}\n\n` : "") +
+    (errors.length || problems.length ? `⚠️ Not applied:\n${[...problems, ...errors].map(e => "• " + e).join("\n")}\n\n` : "") +
+    `Attached is the COMPLETE file with only those pages replaced — every other page is the original, unchanged.\n\n` +
+    `— Automated Clinical Note Generator`;
+
+  await replyWithAttachments(gmail, msg, {
+    text,
+    attachments: [{ filename: outName, buffer: splicedBuffer }]
+  });
+  log(`  Replied with spliced PDF "${outName}" (${affected.length} page(s) replaced).`);
 }
 
 async function processMessage(gmail, messageRef) {
