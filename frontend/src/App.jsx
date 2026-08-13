@@ -1456,6 +1456,33 @@ export default function App() {
       },
       extract: () => { extract485(); },
       generate: () => { generateAll(); },
+      // ── Correction mode support ──────────────────────────────────────────
+      // Export the generated notes as plain data so the worker can store them
+      // and later apply corrections to the exact same batch.
+      getNotesData: () => ({
+        agencyName, snName,
+        poc: notes[0]?.poc || poc || null,
+        notes: notes.map(n => ({
+          dk: n.dk, topic: n.topic, intervention: n.intervention, vs: n.vs,
+          isLast: n.isLast, lastBM: n.lastBM, timeIn: n.timeIn, timeOut: n.timeOut,
+          injSite: n.injSite, painLevel: n.painLevel, phase: n.phase,
+          painLoc: n.painLoc, nurseName: n.nurseName || ""
+        }))
+      }),
+      // Load a (corrected) batch straight into the app for re-rendering —
+      // no regeneration, so unchanged notes stay byte-identical.
+      setNotesData: (batch) => {
+        if (!batch || !Array.isArray(batch.notes)) return false;
+        if (batch.agencyName) setAgencyName(batch.agencyName);
+        if (batch.snName) setSnName(batch.snName);
+        const basePoc = batch.poc || {};
+        setNotes(batch.notes.map(n => ({
+          ...n,
+          date: (() => { const [m,d,y] = String(n.dk||"").split("/").map(Number); const dt = new Date(y, (m||1)-1, d||1); dt.setHours(12,0,0,0); return dt; })(),
+          poc: n.poc || basePoc
+        })));
+        return true;
+      },
       getState: () => ({
         hasFile: !!file, extracting, generating, hasPoc: !!poc,
         agency: agencyName, nurse: snName, dates: dates.map(fmtDate),
