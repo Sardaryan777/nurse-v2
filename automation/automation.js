@@ -13,10 +13,14 @@ import {
   findUnreadWithPdf,
   getMessageDetails,
   replyWithAttachments,
-  markRead
+  markRead,
+  findBatchInThread,
+  getBatchFromMessage,
+  BATCH_FILENAME
 } from "./gmail.js";
 import { extractAgencyName, extractVisitsFromEmail, splitTime } from "./extract.js";
-import { runGenerator } from "./generator.js";
+import { runGenerator, renderCorrectedBatch } from "./generator.js";
+import { parseCorrectionInstructions, applyCorrections, summarizeBatch } from "./correction.js";
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const GENERATOR_URL = process.env.GENERATOR_URL;
@@ -50,10 +54,101 @@ function buildScheduleInputs(visits) {
   return { dates: [...new Set(dates)], times, nurses };
 }
 
+// ── CORRECTION WORKFLOW ────────────────────────────────────────────────────
+// Locate the original note batch, let Claude reason about what to change,
+// apply it, re-render, and reply. Never guesses: if the batch can't be found
+// or an instruction is ambiguous, it replies with a clear error instead.
+async function processCorrection(gmail, msg) {
+  const replyErr = async (text) => {
+    await replyWithAttachments(gmail, msg, { text: `${text}\n\n— Automated Clinical Note Generator`, attachments: [] });
+    log(`  Correction not applied: ${text.split("\n")[0]}`);
+  };
+
+  // 1. Find the original notes: attached to this email, else earlier in the thread.
+  let batch = await getBatchFromMessage(gmail, msg.id);
+  if (batch) log(`  Using note batch attached to this email.`);
+  if (!batch) {
+    batch = await findBatchInThread(gmail, msg.threadId);
+    if (batch) log(`  Recovered original note batch from the email thread.`);
+  }
+  if (!batch || !Array.isArray(batch.notes) || !batch.notes.length) {
+    return replyErr(
+      "Cannot apply correction: the original note file was not attached and no previous note batch was found in this email thread.\n\n" +
+      "Please reply to the email that contained the generated notes (so the batch travels with the thread), or attach the original " +
+      `"${BATCH_FILENAME}" file that came with them.`
+    );
+  }
+  log(`  Original batch: ${batch.notes.length} note(s).`);
+
+  // 2. Ask Claude which notes each instruction targets and what changes.
+  let parsed;
+  try {
+    parsed = await parseCorrectionInstructions(msg.bodyText || "", summarizeBatch(batch));
+  } catch (err) {
+    return replyErr(`Cannot apply correction: the instructions could not be interpreted (${err.message}). Please restate the correction with the visit date, time, and what should change.`);
+  }
+  log(`  Parsed corrections: ${parsed.changes.length} change(s)${parsed.regenerateAll ? " (regenerate all requested)" : ""}.`);
+
+  if (!parsed.changes.length) {
+    const problems = [...parsed.ambiguous, ...parsed.unmatched];
+    return replyErr(
+      "Cannot apply correction: no note matched the instructions." +
+      (problems.length ? `\n\n${problems.join("\n")}` : "") +
+      "\n\nPlease include the visit date (and time if that date has two visits) with each correction."
+    );
+  }
+
+  // 3. Apply, with narrative rewritten so each note stays internally consistent.
+  const { notes, applied, errors } = await applyCorrections(batch, parsed);
+  const corrected = { ...batch, notes };
+
+  // 4. Re-render. Only the touched notes unless the change is global.
+  const touched = [...new Set(parsed.changes.map(c => c.noteIndex).filter(i => typeof i === "number"))].sort((a, b) => a - b);
+  const globalChange = parsed.regenerateAll || parsed.changes.some(c => c?.fields?.discharge != null);
+  const onlyIdx = (!globalChange && touched.length && touched.length <= 2) ? touched : null;
+
+  let rendered;
+  try {
+    rendered = await renderCorrectedBatch(GENERATOR_URL, corrected, onlyIdx);
+  } catch (err) {
+    return replyErr(`Cannot apply correction: the corrected notes could not be rendered (${err.message}).`);
+  }
+
+  // 5. Reply with the corrected PDF + the refreshed batch sidecar.
+  let text = `Hello,\n\nCorrections applied${parsed.summary ? ` — ${parsed.summary}` : ""}.\n\n`;
+  text += applied.length ? `Applied:\n${applied.map(a => "• " + a).join("\n")}\n\n` : "";
+  if (errors.length) text += `⚠️ Not applied:\n${errors.map(e => "• " + e).join("\n")}\n\n`;
+  text += onlyIdx
+    ? `Attached: the ${rendered.noteCount} corrected note(s) only. All other notes are unchanged.\n\n`
+    : `Attached: the full corrected batch (${rendered.noteCount} notes).\n\n`;
+  text += `— Automated Clinical Note Generator`;
+
+  await replyWithAttachments(gmail, msg, {
+    text,
+    attachments: [
+      ...rendered.pdfs,
+      { filename: BATCH_FILENAME, mimeType: "application/json", buffer: Buffer.from(JSON.stringify(corrected), "utf8") }
+    ]
+  });
+  log(`  Replied with corrected PDF (${rendered.noteCount} note(s))${errors.length ? `, ${errors.length} issue(s) reported` : ""}.`);
+}
+
 async function processMessage(gmail, messageRef) {
   if (processed.has(messageRef.id)) return;
 
   const msg = await getMessageDetails(gmail, messageRef.id);
+
+  // ── CORRECTION MODE ─────────────────────────────────────────────────────
+  // Subject contains "correction" (any case) -> the body is correction
+  // instructions for notes we already generated, NOT a new-notes request.
+  if (/correction/i.test(msg.subject || "")) {
+    log(`Processing CORRECTION email from ${msg.from} — "${msg.subject}"`);
+    processed.add(msg.id);
+    await markRead(gmail, msg.id);
+    await processCorrection(gmail, msg);
+    return;
+  }
+
   if (!msg.pdf) {
     log(`Message ${messageRef.id} has no PDF attachment after inspection — skipping.`);
     return;
@@ -62,7 +157,7 @@ async function processMessage(gmail, messageRef) {
   // Never re-process our OWN generated notes (their filename looks like
   // "Note-PATIENT-MM-DD-YYYY-....pdf"). This prevents a reply loop where the
   // robot picks up the notes it just sent and treats them as a new 485.
-  if (/^Note-.+-\d{2}-\d{2}-\d{4}/i.test(msg.pdf.filename || "")) {
+  if (/^Notes?-.+?-\d{2}-\d{2}-\d{4}|^Notes-(CORRECTED-)?.+-\d+-(visits|notes?)\.pdf$/i.test(msg.pdf.filename || "")) {
     log(`Attachment "${msg.pdf.filename}" is a generated note (our own output) — skipping + marking read.`);
     await markRead(gmail, msg.id);
     return;
@@ -106,7 +201,7 @@ async function processMessage(gmail, messageRef) {
   if (wound) log(`  "Wound" in subject → Wound mode ON.`);
 
   // 5. Drive the generator site -> ONE merged PDF (+ any dates skipped for cert period).
-  const { pdfs, noteCount = 0, skippedDates = [], certPeriod = { start: "", end: "" } } = await runGenerator({
+  const { pdfs, noteCount = 0, skippedDates = [], certPeriod = { start: "", end: "" }, batch = null } = await runGenerator({
     url: GENERATOR_URL,
     pdfBuffer: msg.pdf.buffer,
     pdfFilename: msg.pdf.filename,
@@ -148,9 +243,20 @@ async function processMessage(gmail, messageRef) {
         `\n⚠️ The following date(s) were NOT generated because they fall OUTSIDE the ` +
         `certification period (${certLabel}):\n${skippedDates.join(", ")}\n`;
     }
+    text += `\nTo correct any of these notes, just reply to this email with "Correction" in the subject and say what should change.\n`;
     text += `\n— Automated Clinical Note Generator`;
-    await replyWithAttachments(gmail, msg, { text, attachments: pdfs });
-    log(`  Replied with 1 merged PDF (${noteCount} note${noteCount > 1 ? "s" : ""}).${skippedDates.length ? ` Skipped ${skippedDates.length} out-of-period date(s).` : ""}`);
+    // Attach the batch as a small JSON sidecar so a later Correction email in
+    // this thread can be applied to these exact notes.
+    const attachments = [...pdfs];
+    if (batch) {
+      attachments.push({
+        filename: BATCH_FILENAME,
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify(batch), "utf8")
+      });
+    }
+    await replyWithAttachments(gmail, msg, { text, attachments });
+    log(`  Replied with 1 merged PDF (${noteCount} note${noteCount > 1 ? "s" : ""})${batch ? " + batch sidecar" : ""}.${skippedDates.length ? ` Skipped ${skippedDates.length} out-of-period date(s).` : ""}`);
   }
 
   // Already marked read + recorded up front (see LOCK above).

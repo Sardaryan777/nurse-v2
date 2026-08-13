@@ -32,11 +32,13 @@ export function getGmail() {
   return google.gmail({ version: "v1", auth: buildAuth() });
 }
 
-// Find unread messages that carry a PDF attachment.
+// Find unread messages we should act on: either a new-notes request (PDF
+// attached) or a Correction request (subject says "correction" — these often
+// carry no attachment at all, just instructions).
 export async function findUnreadWithPdf(gmail) {
   const res = await gmail.users.messages.list({
     userId: "me",
-    q: "is:unread has:attachment filename:pdf",
+    q: "is:unread ((has:attachment filename:pdf) OR subject:correction)",
     maxResults: 10
   });
   return res.data.messages || [];
@@ -137,7 +139,7 @@ export async function replyWithAttachments(gmail, original, { text, attachments 
 
   for (const att of attachments) {
     lines.push(`--${boundary}`);
-    lines.push(`Content-Type: application/pdf; name="${att.filename}"`);
+    lines.push(`Content-Type: ${att.mimeType || "application/pdf"}; name="${att.filename}"`);
     lines.push("Content-Transfer-Encoding: base64");
     lines.push(`Content-Disposition: attachment; filename="${att.filename}"`);
     lines.push("");
@@ -156,6 +158,45 @@ export async function replyWithAttachments(gmail, original, { text, attachments 
     userId: "me",
     requestBody: { raw, threadId: original.threadId }
   });
+}
+
+// Name of the hidden sidecar we attach to every reply so a later "Correction"
+// email in the same thread can recover the EXACT notes we generated.
+export const BATCH_FILENAME = "note-batch.json";
+
+// Download a named attachment from a single message. Returns Buffer | null.
+async function getNamedAttachment(gmail, messageId, filename) {
+  const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
+  const parts = flattenParts(msg.data.payload);
+  const part = parts.find(p => (p.filename || "").toLowerCase() === filename.toLowerCase() && p.body?.attachmentId);
+  if (!part) return null;
+  const att = await gmail.users.messages.attachments.get({
+    userId: "me", messageId, id: part.body.attachmentId
+  });
+  return Buffer.from(att.data.data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+
+// Walk a thread newest-first and return the most recent note batch we stored.
+// This is how Correction mode finds the original notes without a database.
+export async function findBatchInThread(gmail, threadId) {
+  if (!threadId) return null;
+  const thread = await gmail.users.threads.get({ userId: "me", id: threadId, format: "minimal" });
+  const ids = (thread.data.messages || []).map(m => m.id).reverse(); // newest first
+  for (const id of ids) {
+    try {
+      const buf = await getNamedAttachment(gmail, id, BATCH_FILENAME);
+      if (buf) return JSON.parse(buf.toString("utf8"));
+    } catch { /* keep looking */ }
+  }
+  return null;
+}
+
+// Pull a note batch attached directly to THIS email (user forwarded it back).
+export async function getBatchFromMessage(gmail, messageId) {
+  try {
+    const buf = await getNamedAttachment(gmail, messageId, BATCH_FILENAME);
+    return buf ? JSON.parse(buf.toString("utf8")) : null;
+  } catch { return null; }
 }
 
 export async function markRead(gmail, messageId) {

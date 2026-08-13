@@ -142,6 +142,10 @@ export async function runGenerator(opts) {
       throw new Error(finalState.error || "Generator produced no notes");
     }
 
+    // Capture the batch as plain data so a later "Correction" email can be
+    // applied to these exact notes (stored as a sidecar on the reply).
+    const batch = await page.evaluate(() => window.__automation.getNotesData?.() || null);
+
     // 7. Retrieve generated HTML (already oldest→newest) and render each to PDF.
     // Each note MUST be exactly one A4 page. If a note (e.g. a BID note with
     // injection text) is taller than the printable area, scale it down just
@@ -190,9 +194,77 @@ export async function runGenerator(opts) {
 
     if (skippedDates.length) console.log(`Skipped ${skippedDates.length} date(s) outside cert period: ${skippedDates.join(", ")}`);
     console.log(`Merged ${noteCount} note(s) into 1 PDF: ${mergedName}`);
-    return { pdfs, noteCount, skippedDates, certPeriod };
+    return { pdfs, noteCount, skippedDates, certPeriod, batch };
   } finally {
     await browser.close();
     fs.unlink(tmpPdf).catch(() => {});
+  }
+}
+
+// Turn note HTML into one merged, one-page-per-note A4 PDF.
+async function renderNotesToPdf(browser, notesHTML, mergedName) {
+  const CONTENT_W = 733, PRINTABLE_H = 1040;
+  const pagePdfs = [];
+  for (const note of notesHTML) {
+    const p = await browser.newPage();
+    await p.setViewport({ width: CONTENT_W, height: 1123, deviceScaleFactor: 1 });
+    await p.setContent(note.html, { waitUntil: "networkidle0", timeout: 30000 });
+    await p.addStyleTag({ content: ".cols,.left,.right{page-break-inside:auto!important;break-inside:auto!important}" });
+    const contentH = await p.evaluate(() => Math.ceil(document.body.scrollHeight));
+    const scale = contentH > PRINTABLE_H ? Math.max(0.55, PRINTABLE_H / contentH) : 1;
+    const buffer = await p.pdf({
+      format: "A4", printBackground: true,
+      margin: { top: "10mm", bottom: "10mm", left: "8mm", right: "8mm" },
+      scale, pageRanges: "1"
+    });
+    await p.close();
+    pagePdfs.push(Buffer.from(buffer));
+  }
+  const merged = await PDFDocument.create();
+  for (const buf of pagePdfs) {
+    const src = await PDFDocument.load(buf);
+    const copied = await merged.copyPages(src, src.getPageIndices());
+    copied.forEach(pg => merged.addPage(pg));
+  }
+  return { filename: mergedName, buffer: Buffer.from(await merged.save()) };
+}
+
+/**
+ * CORRECTION MODE: render an already-corrected note batch to PDF.
+ * No AI generation happens here — the notes are loaded verbatim, so anything
+ * the correction didn't touch comes out exactly as it was.
+ * @param {string} url            GENERATOR_URL
+ * @param {Object} batch          { agencyName, snName, poc, notes:[...] }
+ * @param {number[]} [onlyIdx]    render only these note indexes (corrected-only output)
+ * @returns {Promise<{pdfs:Array, noteCount:number}>}
+ */
+export async function renderCorrectedBatch(url, batch, onlyIdx = null) {
+  const browser = await puppeteer.launch(launchOpts);
+  try {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(60000);
+    await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.waitForFunction(() => window.__automation?.ready === true, { timeout: 30000 });
+
+    const ok = await page.evaluate((b) => window.__automation.setNotesData?.(b) === true, batch);
+    if (!ok) throw new Error("Generator could not load the corrected note batch (setNotesData unavailable — is the site updated?)");
+    await sleep(600);
+
+    let notesHTML = await page.evaluate(() => window.__automation.getNotesHTML());
+    if (!notesHTML.length) throw new Error("Corrected batch produced no notes");
+
+    const patient = (batch.notes?.[0]?.poc?.patient?.name || batch.poc?.patient?.name || "patient").replace(/[\s,]+/g, "-");
+    let name = `Notes-CORRECTED-${patient}-${notesHTML.length}-visits.pdf`;
+
+    if (Array.isArray(onlyIdx) && onlyIdx.length) {
+      notesHTML = onlyIdx.filter(i => i >= 0 && i < notesHTML.length).map(i => notesHTML[i]);
+      name = `Notes-CORRECTED-${patient}-${notesHTML.length}-note${notesHTML.length > 1 ? "s" : ""}.pdf`;
+    }
+
+    const pdf = await renderNotesToPdf(browser, notesHTML, name);
+    console.log(`Rendered corrected PDF: ${name} (${notesHTML.length} note(s)).`);
+    return { pdfs: [pdf], noteCount: notesHTML.length };
+  } finally {
+    await browser.close();
   }
 }
