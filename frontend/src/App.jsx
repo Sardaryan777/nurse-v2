@@ -233,6 +233,7 @@ const NOTE_PROMPT = `You are an experienced LVN writing a home health clinical n
 
 STRICT DATA RULE: Only mention diagnoses, medications, treatments, and findings that are listed below. Never invent inhalers, insulin, oxygen, wounds, catheters, diabetes, COPD, or any condition not in the data.
 
+{CUSTOM_INSTRUCTIONS}
 VISIT CONTEXT:
 - Teaching topic: {TOPIC}
 - Visit phase: {PHASE}
@@ -276,6 +277,7 @@ const WOUND_NOTE_PROMPT = `You are an experienced LVN writing a home health WOUN
 
 STRICT DATA RULE: Only document wound details listed below. NEVER invent wound measurements, stages, drainage amounts, odor, wound bed findings, dressing types, or locations that are not provided. If a detail is blank/unknown, use conservative wording ("per physician order", "per plan of care").
 
+{CUSTOM_INSTRUCTIONS}
 VISIT CONTEXT:
 - Wound teaching topic this visit: {WTOPIC}
 - Wound(s) — document EACH separately, never merge: {WOUNDS}
@@ -560,6 +562,17 @@ function cleanNoteText(text) {
 }
 // Detect final discharge visit by date vs cert end / last scheduled
 function normDate(d){ if(!d)return null; const x=new Date(d); x.setHours(0,0,0,0); return x; }
+
+// Free-text lines in the bulk box (anything that is not a date row or a "Nurse:" row)
+// are treated as the nurse's own instructions for what the notes should say.
+function extractInstructionLines(text) {
+  return String(text||"").split("\n").map(l => l.trim()).filter(l => {
+    if (!l) return false;
+    if (/^nurse\s*[:\-]/i.test(l)) return false;
+    if (/\d{1,2}[\/\.]\d{1,2}[\/\.]\d{2,4}/.test(l)) return false;   // any date row
+    return true;
+  }).join(" ");
+}
 
 // ── NAME AUTOCOMPLETE ─────────────────────────────────────────────────────────
 function NameAutocomplete({ value, onChange }) {
@@ -974,6 +987,7 @@ export default function App() {
   const [bulkEntries,setBulkEntries]= useState([]); // parsed [{date,timeIn,timeOut}]
   const [file487,    setFile487]    = useState(null);
   const [woundMode,  setWoundMode]  = useState(false);
+  const [customNotes,setCustomNotes]= useState("");
   const [emailSubject,setEmailSubject]= useState("");
   const [manualWound,setManualWound]= useState({location:"",careOrder:"",dressingType:"",frequency:""});
   const [showWoundFields,setShowWoundFields]=useState(false);
@@ -1223,12 +1237,19 @@ export default function App() {
         }
 
         const prevNote = prevTopics.length>0 ? ` Previously covered: ${prevTopics.slice(-3).join(", ")}. Use different phrasing.` : "";
+        // Nurse's own instructions: dedicated field + any free-text lines typed in the
+        // bulk box. Highest priority for CONTENT, but may never contradict the 485.
+        const instrText = [customNotes.trim(), extractInstructionLines(bulkText)].filter(Boolean).join(" ");
+        const instrBlock = instrText
+          ? `SPECIAL INSTRUCTIONS FROM THE NURSE (MUST be reflected in this note):\n"${instrText}"\nRules for these instructions: weave them into the note naturally as real charting — do NOT quote them verbatim and do NOT copy the same sentence into every note; vary the wording each visit. They set what the note should FOCUS ON and may add real clinical events (refusals, complaints, caregiver issues, MD calls, equipment problems, teaching emphasis). They may NEVER contradict the 485: never add a diagnosis, medication, treatment, or device that is not in the data below.\n`
+          : "";
         // BID notes add a ~80-word injection paragraph → shorter AI base keeps
         // the total ≈ a normal note (fits one page at full font size).
         const wordTarget = useInjection ? "120-190" : "180-320";
         const basePrompt = woundMode ? WOUND_NOTE_PROMPT : NOTE_PROMPT;
         const prompt=basePrompt
           .replace(/\{WORDS\}/g,wordTarget)
+          .replace(/\{CUSTOM_INSTRUCTIONS\}/g, instrBlock)
           .replace(/\{WTOPIC\}/g, wt[1])
           .replace(/\{WOUNDS\}/g, woundsStr)
           .replace(/\{WSTAGE\}/g, wprog0 ? wprog0.careMode : "not applicable")
@@ -1416,7 +1437,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 15, ready: true,
+      version: 16, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
@@ -1520,6 +1541,21 @@ export default function App() {
                 {/wound/i.test(emailSubject) && <span style={{fontSize:10,background:"#fee2e2",color:"#991b1b",padding:"2px 8px",borderRadius:10,fontWeight:700}}>🩹 WOUND MODE detected</span>}
                 {/\b(bid|pid)\b/i.test(emailSubject) && <span style={{fontSize:10,background:"#dcfce7",color:"#166534",padding:"2px 8px",borderRadius:10,fontWeight:700}}>💉 BID detected</span>}
                 {!/wound/i.test(emailSubject) && !/\b(bid|pid)\b/i.test(emailSubject) && <span style={{fontSize:10,color:"#94a3b8"}}>no mode keywords — regular notes</span>}
+              </div>
+            )}
+          </div>
+
+          {/* Nurse instructions / corrections */}
+          <div style={{marginBottom:10}}>
+            <label style={{fontSize:11,fontWeight:700,color:"#475569",display:"block",marginBottom:4}}>
+              📝 Instructions / Corrections <span style={{fontWeight:400,color:"#94a3b8"}}>(optional — what these notes should say)</span>
+            </label>
+            <textarea value={customNotes} onChange={e=>setCustomNotes(e.target.value)} rows={3}
+              placeholder={"e.g. Patient refused wound care on one visit and caregiver performed it instead.\nEmphasize teaching on low-sodium diet.\nPatient reported dizziness after standing; MD notified."}
+              style={{width:"100%",fontSize:12,padding:"8px 10px",border:"1.5px solid #e2e8f0",borderRadius:8,boxSizing:"border-box",fontFamily:"inherit",resize:"vertical"}}/>
+            {(customNotes.trim() || extractInstructionLines(bulkText)) && (
+              <div style={{fontSize:10,color:"#166534",background:"#f0fdf4",border:"1px solid #86efac",borderRadius:6,padding:"4px 8px",marginTop:4}}>
+                ✓ These instructions will be woven into every generated note (varied wording, never contradicting the 485).
               </div>
             )}
           </div>
