@@ -701,7 +701,8 @@ function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topi
   const ms = poc.mentalStatus||{};
   const df = poc.deficits||{};
   const hbf = poc.homeboundFlags||{limitedEndurance:true,limitedStrength:true,assistADL:true,unevenSurfaces:true,confusion:false,unableToLeaveAlone:true,poorCoordination:false,taxingEffort:true};
-  const painChar = getPainCharacter(poc.diagnoses);
+  // Correction emails can override the pain character; otherwise derive it.
+  const painChar = poc.painCharOverride || getPainCharacter(poc.diagnoses);
   // Pain medication driven ONLY by 485/POC medication list
   const _painMed = findPainMed(poc.medications);
   const painMedText = _painMed==="Tylenol" ? "Tylenol / Acetaminophen as ordered"
@@ -775,33 +776,35 @@ html,body{
 .hdr{text-align:center;margin-bottom:3pt}
 .hdr h1{font-size:14pt;font-weight:900;letter-spacing:0.5pt}
 .hdr h2{font-size:10pt;font-weight:900;letter-spacing:2pt}
-.cols{display:flex;border-top:2pt solid #000;padding-top:3pt}
+.cols{display:flex;align-items:stretch;border-top:2pt solid #000;padding-top:3pt}
 .left{
-  width:40%;
+  flex:0 0 40%;
+  max-width:40%;
   padding-right:6pt;
   border-right:1pt solid #666;
   font-size:8.2pt;
-  line-height:1.32;
+  line-height:1.28;
 }
 .right{
-  width:60%;
+  flex:1 1 60%;
+  max-width:60%;
   padding-left:6pt;
   font-size:8.4pt;
-  line-height:1.35;
+  line-height:1.30;
 }
-.sec{margin-bottom:2.5pt;page-break-inside:avoid;break-inside:avoid}
+.sec{margin-bottom:1.6pt;page-break-inside:avoid;break-inside:avoid}
 .st{font-weight:900}
 .intv{
   font-size:8pt;
-  line-height:1.32;
-  margin-bottom:2.5pt;
+  line-height:1.28;
+  margin-bottom:1.6pt;
   page-break-inside:avoid;
   break-inside:avoid;
 }
 .sm{
   font-size:8pt;
-  line-height:1.28;
-  margin-bottom:2pt;
+  line-height:1.24;
+  margin-bottom:1.4pt;
   page-break-inside:avoid;
   break-inside:avoid;
 }
@@ -815,11 +818,17 @@ html,body{
 }
 .bgrid .lbl{font-weight:700;border-bottom:1pt solid #777;margin-bottom:1pt;font-size:8.5pt}
 @media print{
-  @page{size:A4 portrait;margin:10mm 8mm 10mm 8mm}
   html,body{width:100%;overflow:visible}
-  .sec,.intv,.sm,.bgrid,.cols,.left,.right{
+  /* Keep SMALL blocks intact, but never the whole two-column body — making
+     .cols/.left/.right unbreakable meant one extra line pushed the entire form
+     onto page 2 and left page 1 almost empty. */
+  .sec,.intv,.sm,.bgrid{
     page-break-inside:avoid !important;
     break-inside:avoid !important;
+  }
+  .cols,.left,.right{
+    page-break-inside:auto !important;
+    break-inside:auto !important;
   }
 }
 </style>
