@@ -184,34 +184,66 @@ export async function runGenerator(opts) {
 //    truth, so the PDF matches what you get printing the HTML from a browser.
 //  • Viewport = full A4 at 96dpi so the form lays out at true page width.
 async function renderNotesToPdf(browser, notesHTML, mergedName) {
-  const A4_W = 794, A4_H = 1123;        // A4 at 96dpi
+  // A4 @96dpi = 794 x 1123px. The proven geometry: fixed A4 page with 8mm side
+  // and 10mm top/bottom margins, so the content box is 734 x ~1047px.
+  const CONTENT_W = 734, USABLE_H = 1040;
+  const PDF_OPTS = {
+    format: "A4",
+    printBackground: true,
+    margin: { top: "10mm", bottom: "10mm", left: "8mm", right: "8mm" }
+  };
+
+  // If a note is taller than the page, tighten LINE-HEIGHT and SECTION SPACING
+  // step by step until it fits. Font size never changes, and the form keeps the
+  // full page width — unlike page scaling, which shrank it into a corner.
+  const compactCss = (lv) => `
+    .hdr{margin-bottom:${Math.max(1, 3 - lv * 0.4).toFixed(2)}pt !important}
+    .cols{padding-top:${Math.max(1, 3 - lv * 0.4).toFixed(2)}pt !important}
+    .left{line-height:${Math.max(1.06, 1.28 - lv * 0.035).toFixed(3)} !important}
+    .right{line-height:${Math.max(1.08, 1.30 - lv * 0.035).toFixed(3)} !important}
+    .sec{margin-bottom:${Math.max(0.3, 1.6 - lv * 0.25).toFixed(2)}pt !important}
+    .intv{margin-bottom:${Math.max(0.3, 1.6 - lv * 0.25).toFixed(2)}pt !important;
+          line-height:${Math.max(1.06, 1.28 - lv * 0.035).toFixed(3)} !important}
+    .sm{margin-bottom:${Math.max(0.2, 1.4 - lv * 0.22).toFixed(2)}pt !important;
+        line-height:${Math.max(1.04, 1.24 - lv * 0.035).toFixed(3)} !important}
+    .bgrid{margin-top:${Math.max(1, 3 - lv * 0.4).toFixed(2)}pt !important;
+           padding-top:${Math.max(0.5, 2 - lv * 0.25).toFixed(2)}pt !important}
+  `;
+
   const pagePdfs = [];
-  let overflow = 0;
+  let compacted = 0, overflow = 0;
 
   for (const note of notesHTML) {
     const p = await browser.newPage();
-    await p.setViewport({ width: A4_W, height: A4_H, deviceScaleFactor: 1 });
+    // Measure in the PRINT layout at the true content width, so what we measure
+    // is what the PDF will lay out.
+    await p.setViewport({ width: CONTENT_W, height: 1123, deviceScaleFactor: 1 });
+    await p.emulateMediaType("print");
     await p.setContent(note.html, { waitUntil: "networkidle0", timeout: 30000 });
 
-    const buffer = await p.pdf({
-      printBackground: true,
-      preferCSSPageSize: true,   // honour the note's own @page size + margins
-      pageRanges: "1"            // one note = one page
-    });
+    const measure = () => p.evaluate(() => Math.ceil(document.documentElement.scrollHeight));
+    let h = await measure();
+    let lv = 0;
+    while (h > USABLE_H && lv < 6) {
+      lv++;
+      await p.addStyleTag({ content: compactCss(lv) });
+      h = await measure();
+    }
+    if (lv > 0) compacted++;
 
-    // Report (don't silently truncate without telling anyone) if a note was
-    // genuinely taller than its page.
-    const pages = await p.evaluate(() => {
-      const mm = 3.7795;                        // px per mm at 96dpi
-      const usable = 1123 - (20 * mm);          // A4 height minus 10mm top+bottom
-      return Math.ceil(document.body.scrollHeight / usable);
-    });
-    if (pages > 1) { overflow++; console.log(`  ⚠ Note "${note.filename}" ran past one page — review its content.`); }
+    // Only force a single page when it genuinely fits. If a note is still too
+    // tall after maximum compaction, let it run to a 2nd page — losing the
+    // bottom of a clinical note is never the right trade.
+    const opts = { ...PDF_OPTS };
+    if (h <= USABLE_H) opts.pageRanges = "1";
+    else { overflow++; console.log(`  ⚠ "${note.filename}" still exceeds one page after compaction — kept in full across 2 pages.`); }
 
+    const buffer = await p.pdf(opts);
     await p.close();
     pagePdfs.push(Buffer.from(buffer));
   }
-  if (overflow) console.log(`  ⚠ ${overflow} note(s) exceeded one page.`);
+  if (compacted) console.log(`  ${compacted} note(s) auto-compacted to fit one page (font size unchanged).`);
+  if (overflow) console.log(`  ⚠ ${overflow} note(s) needed 2 pages.`);
 
   const merged = await PDFDocument.create();
   for (const buf of pagePdfs) {
