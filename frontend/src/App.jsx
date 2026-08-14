@@ -776,35 +776,33 @@ html,body{
 .hdr{text-align:center;margin-bottom:3pt}
 .hdr h1{font-size:14pt;font-weight:900;letter-spacing:0.5pt}
 .hdr h2{font-size:10pt;font-weight:900;letter-spacing:2pt}
-.cols{display:flex;align-items:stretch;border-top:2pt solid #000;padding-top:3pt}
+.cols{display:flex;border-top:2pt solid #000;padding-top:3pt}
 .left{
-  flex:0 0 40%;
-  max-width:40%;
+  width:40%;
   padding-right:6pt;
   border-right:1pt solid #666;
   font-size:8.2pt;
-  line-height:1.28;
+  line-height:1.32;
 }
 .right{
-  flex:1 1 60%;
-  max-width:60%;
+  width:60%;
   padding-left:6pt;
   font-size:8.4pt;
-  line-height:1.30;
+  line-height:1.35;
 }
-.sec{margin-bottom:1.6pt;page-break-inside:avoid;break-inside:avoid}
+.sec{margin-bottom:2.5pt;page-break-inside:avoid;break-inside:avoid}
 .st{font-weight:900}
 .intv{
   font-size:8pt;
-  line-height:1.28;
-  margin-bottom:1.6pt;
+  line-height:1.32;
+  margin-bottom:2.5pt;
   page-break-inside:avoid;
   break-inside:avoid;
 }
 .sm{
   font-size:8pt;
-  line-height:1.24;
-  margin-bottom:1.4pt;
+  line-height:1.28;
+  margin-bottom:2pt;
   page-break-inside:avoid;
   break-inside:avoid;
 }
@@ -818,17 +816,11 @@ html,body{
 }
 .bgrid .lbl{font-weight:700;border-bottom:1pt solid #777;margin-bottom:1pt;font-size:8.5pt}
 @media print{
+  @page{size:A4 portrait;margin:10mm 8mm 10mm 8mm}
   html,body{width:100%;overflow:visible}
-  /* Keep SMALL blocks intact, but never the whole two-column body — making
-     .cols/.left/.right unbreakable meant one extra line pushed the entire form
-     onto page 2 and left page 1 almost empty. */
-  .sec,.intv,.sm,.bgrid{
+  .sec,.intv,.sm,.bgrid,.cols,.left,.right{
     page-break-inside:avoid !important;
     break-inside:avoid !important;
-  }
-  .cols,.left,.right{
-    page-break-inside:auto !important;
-    break-inside:auto !important;
   }
 }
 </style>
