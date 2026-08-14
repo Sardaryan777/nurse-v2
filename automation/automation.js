@@ -14,10 +14,9 @@ import {
   getMessageDetails,
   replyWithAttachments,
   markRead,
-  findBatchInThread,
-  getBatchFromMessage,
-  BATCH_FILENAME
+  findBatchInThread
 } from "./gmail.js";
+import { readBatchFromPdf } from "./batchstore.js";
 import { extractAgencyName, extractVisitsFromEmail, splitTime } from "./extract.js";
 import { runGenerator, renderCorrectedBatch } from "./generator.js";
 import { parseCorrectionInstructions, applyCorrections, summarizeBatch } from "./correction.js";
@@ -65,12 +64,17 @@ async function processCorrection(gmail, msg) {
     log(`  Correction not applied: ${text.split("\n")[0]}`);
   };
 
-  // 1. Find the original notes: attached to this email, else earlier in the thread.
-  let batch = await getBatchFromMessage(gmail, msg.id);
-  if (batch) log(`  Using note batch attached to this email.`);
+  // 1. Find the original notes. Our generated PDFs carry the structured batch
+  //    hidden in their metadata, so check any PDF attached here first, then
+  //    fall back to the most recent generated PDF in this thread.
+  let batch = null;
+  for (const p of (msg.pdfs || [])) {
+    batch = await readBatchFromPdf(p.buffer);
+    if (batch) { log(`  Recovered note batch from attached "${p.filename}".`); break; }
+  }
   if (!batch) {
-    batch = await findBatchInThread(gmail, msg.threadId);
-    if (batch) log(`  Recovered original note batch from the email thread.`);
+    batch = await findBatchInThread(gmail, msg.threadId, readBatchFromPdf);
+    if (batch) log(`  Recovered note batch from a PDF earlier in this thread.`);
   }
   // No stored batch? Fall back to PAGE-SPLICE: correct an already-delivered PDF
   // by regenerating only the affected pages and swapping them back in.
@@ -81,9 +85,9 @@ async function processCorrection(gmail, msg) {
       return processCorrectionBySplice(gmail, msg, notesPdf, pocPdf, replyErr);
     }
     return replyErr(
-      "Cannot apply correction: no previous note batch was found in this email thread, and no notes PDF was attached.\n\n" +
-      "Either reply to the email that delivered the notes, or attach BOTH the generated notes PDF and the CMS-485/487 " +
-      "so the corrected pages can be rebuilt."
+      "Cannot apply correction: no generated notes were found for this request.\n\n" +
+      "Either reply to the email that delivered the notes PDF, or attach that PDF (together with the CMS-485/487 " +
+      "if it was generated before this feature existed) so the corrected pages can be rebuilt."
     );
   }
   log(`  Original batch: ${batch.notes.length} note(s).`);
@@ -131,13 +135,8 @@ async function processCorrection(gmail, msg) {
     : `Attached: the full corrected batch (${rendered.noteCount} notes).\n\n`;
   text += `— Automated Clinical Note Generator`;
 
-  await replyWithAttachments(gmail, msg, {
-    text,
-    attachments: [
-      ...rendered.pdfs,
-      { filename: BATCH_FILENAME, mimeType: "application/json", buffer: Buffer.from(JSON.stringify(corrected), "utf8") }
-    ]
-  });
+  // The corrected batch rides inside the PDF's metadata — no extra file.
+  await replyWithAttachments(gmail, msg, { text, attachments: rendered.pdfs });
   log(`  Replied with corrected PDF (${rendered.noteCount} note(s))${errors.length ? `, ${errors.length} issue(s) reported` : ""}.`);
 }
 
@@ -389,18 +388,9 @@ async function processMessage(gmail, messageRef) {
     }
     text += `\nTo correct any of these notes, just reply to this email with "Correction" in the subject and say what should change.\n`;
     text += `\n— Automated Clinical Note Generator`;
-    // Attach the batch as a small JSON sidecar so a later Correction email in
-    // this thread can be applied to these exact notes.
-    const attachments = [...pdfs];
-    if (batch) {
-      attachments.push({
-        filename: BATCH_FILENAME,
-        mimeType: "application/json",
-        buffer: Buffer.from(JSON.stringify(batch), "utf8")
-      });
-    }
-    await replyWithAttachments(gmail, msg, { text, attachments });
-    log(`  Replied with 1 merged PDF (${noteCount} note${noteCount > 1 ? "s" : ""})${batch ? " + batch sidecar" : ""}.${skippedDates.length ? ` Skipped ${skippedDates.length} out-of-period date(s).` : ""}`);
+    // Single clean attachment: the batch data is hidden inside the PDF itself.
+    await replyWithAttachments(gmail, msg, { text, attachments: pdfs });
+    log(`  Replied with 1 merged PDF (${noteCount} note${noteCount > 1 ? "s" : ""})${batch ? " [batch embedded]" : ""}.${skippedDates.length ? ` Skipped ${skippedDates.length} out-of-period date(s).` : ""}`);
   }
 
   // Already marked read + recorded up front (see LOCK above).

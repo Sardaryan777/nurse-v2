@@ -7,6 +7,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { PDFDocument } from "pdf-lib";
+import { embedBatchInPdf } from "./batchstore.js";
 
 const launchOpts = {
   headless: "new",
@@ -190,7 +191,10 @@ export async function runGenerator(opts) {
     const patientTag = pm ? pm[1] : "patient";
     const mergedName = `Notes-${patientTag}-${noteCount}-visits.pdf`;
 
-    const pdfs = [{ filename: mergedName, buffer: Buffer.from(mergedBytes) }];
+    // Tuck the structured batch into the PDF's metadata so a later Correction
+    // email can work from this exact file — no extra attachment needed.
+    const mergedBuf = await embedBatchInPdf(Buffer.from(mergedBytes), batch);
+    const pdfs = [{ filename: mergedName, buffer: mergedBuf }];
 
     if (skippedDates.length) console.log(`Skipped ${skippedDates.length} date(s) outside cert period: ${skippedDates.join(", ")}`);
     console.log(`Merged ${noteCount} note(s) into 1 PDF: ${mergedName}`);
@@ -262,6 +266,8 @@ export async function renderCorrectedBatch(url, batch, onlyIdx = null) {
     }
 
     const pdf = await renderNotesToPdf(browser, notesHTML, name);
+    // Carry the corrected batch forward so THIS file can be corrected again.
+    pdf.buffer = await embedBatchInPdf(pdf.buffer, batch);
     console.log(`Rendered corrected PDF: ${name} (${notesHTML.length} note(s)).`);
     return { pdfs: [pdf], noteCount: notesHTML.length };
   } finally {

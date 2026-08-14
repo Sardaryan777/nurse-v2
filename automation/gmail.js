@@ -165,43 +165,40 @@ export async function replyWithAttachments(gmail, original, { text, attachments 
   });
 }
 
-// Name of the hidden sidecar we attach to every reply so a later "Correction"
-// email in the same thread can recover the EXACT notes we generated.
-export const BATCH_FILENAME = "note-batch.json";
-
-// Download a named attachment from a single message. Returns Buffer | null.
-async function getNamedAttachment(gmail, messageId, filename) {
+// Download every PDF attachment on a message (filename + bytes).
+async function getPdfAttachments(gmail, messageId) {
   const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
-  const parts = flattenParts(msg.data.payload);
-  const part = parts.find(p => (p.filename || "").toLowerCase() === filename.toLowerCase() && p.body?.attachmentId);
-  if (!part) return null;
-  const att = await gmail.users.messages.attachments.get({
-    userId: "me", messageId, id: part.body.attachmentId
-  });
-  return Buffer.from(att.data.data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+  const parts = flattenParts(msg.data.payload).filter(p =>
+    (p.mimeType === "application/pdf" || (p.filename || "").toLowerCase().endsWith(".pdf")) && p.body?.attachmentId
+  );
+  const out = [];
+  for (const p of parts) {
+    const att = await gmail.users.messages.attachments.get({ userId: "me", messageId, id: p.body.attachmentId });
+    out.push({
+      filename: p.filename || "document.pdf",
+      buffer: Buffer.from(att.data.data.replace(/-/g, "+").replace(/_/g, "/"), "base64")
+    });
+  }
+  // Our generated batches first — they're the ones carrying the embedded data.
+  return out.sort((a, b) => (/^notes?[-_]/i.test(b.filename) ? 1 : 0) - (/^notes?[-_]/i.test(a.filename) ? 1 : 0));
 }
 
-// Walk a thread newest-first and return the most recent note batch we stored.
-// This is how Correction mode finds the original notes without a database.
-export async function findBatchInThread(gmail, threadId) {
+// Walk a thread newest-first and recover the note batch hidden inside the most
+// recent generated PDF. This is how Correction mode finds the original notes
+// without a database and without emailing the user a separate data file.
+export async function findBatchInThread(gmail, threadId, readBatchFromPdf) {
   if (!threadId) return null;
   const thread = await gmail.users.threads.get({ userId: "me", id: threadId, format: "minimal" });
   const ids = (thread.data.messages || []).map(m => m.id).reverse(); // newest first
   for (const id of ids) {
     try {
-      const buf = await getNamedAttachment(gmail, id, BATCH_FILENAME);
-      if (buf) return JSON.parse(buf.toString("utf8"));
+      for (const pdf of await getPdfAttachments(gmail, id)) {
+        const batch = await readBatchFromPdf(pdf.buffer);
+        if (batch) return batch;
+      }
     } catch { /* keep looking */ }
   }
   return null;
-}
-
-// Pull a note batch attached directly to THIS email (user forwarded it back).
-export async function getBatchFromMessage(gmail, messageId) {
-  try {
-    const buf = await getNamedAttachment(gmail, messageId, BATCH_FILENAME);
-    return buf ? JSON.parse(buf.toString("utf8")) : null;
-  } catch { return null; }
 }
 
 export async function markRead(gmail, messageId) {
