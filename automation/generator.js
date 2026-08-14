@@ -147,54 +147,21 @@ export async function runGenerator(opts) {
     // applied to these exact notes (stored as a sidecar on the reply).
     const batch = await page.evaluate(() => window.__automation.getNotesData?.() || null);
 
-    // 7. Retrieve generated HTML (already oldest→newest) and render each to PDF.
-    // Each note MUST be exactly one A4 page. If a note (e.g. a BID note with
-    // injection text) is taller than the printable area, scale it down just
-    // enough to fit — "write it a little smaller to fit one page".
+    // 7-8. Render + merge through the SAME layout engine every other note type
+    // uses (see renderNotesToPdf) — no per-type geometry, no scaling.
     const notesHTML = await page.evaluate(() => window.__automation.getNotesHTML());
-    const pagePdfs = [];
-    // A4 @96dpi = 793.7 x 1122.5px; minus 8mm side + 10mm top/bottom margins.
-    const CONTENT_W = 733;   // printable width  (px)
-    const PRINTABLE_H = 1040; // printable height (px, with a small safety margin)
-    for (const note of notesHTML) {
-      const p = await browser.newPage();
-      await p.setViewport({ width: CONTENT_W, height: 1123, deviceScaleFactor: 1 });
-      await p.setContent(note.html, { waitUntil: "networkidle0", timeout: 30000 });
-      // Don't let the whole column block jump to page 2 as one unit.
-      await p.addStyleTag({ content: ".cols,.left,.right{page-break-inside:auto!important;break-inside:auto!important}" });
-      // Measure the note's natural height and compute a shrink factor if needed.
-      const contentH = await p.evaluate(() => Math.ceil(document.body.scrollHeight));
-      const scale = contentH > PRINTABLE_H ? Math.max(0.55, PRINTABLE_H / contentH) : 1;
-      const buffer = await p.pdf({
-        format: "A4",
-        printBackground: true,
-        margin: { top: "10mm", bottom: "10mm", left: "8mm", right: "8mm" },
-        scale,
-        pageRanges: "1"   // hard guarantee: never more than one page per note
-      });
-      await p.close();
-      if (scale < 1) console.log(`  Note scaled to ${(scale*100).toFixed(0)}% to fit one page (was ${contentH}px).`);
-      pagePdfs.push(Buffer.from(buffer));
-    }
-
-    // 8. Merge ALL notes into a SINGLE PDF (one page per note, oldest→newest).
-    const merged = await PDFDocument.create();
-    for (const buf of pagePdfs) {
-      const src = await PDFDocument.load(buf);
-      const copied = await merged.copyPages(src, src.getPageIndices());
-      copied.forEach(pg => merged.addPage(pg));
-    }
-    const mergedBytes = await merged.save();
 
     // Name the combined file after the patient.
     const pm = (notesHTML[0]?.filename || "").match(/^Note-(.+?)-\d{2}-\d{2}-\d{4}/i);
     const patientTag = pm ? pm[1] : "patient";
     const mergedName = `Notes-${patientTag}-${noteCount}-visits.pdf`;
 
+    const mergedPdf = await renderNotesToPdf(browser, notesHTML, mergedName);
+
     // Tuck the structured batch into the PDF's metadata so a later Correction
     // email can work from this exact file — no extra attachment needed.
-    const mergedBuf = await embedBatchInPdf(Buffer.from(mergedBytes), batch);
-    const pdfs = [{ filename: mergedName, buffer: mergedBuf }];
+    mergedPdf.buffer = await embedBatchInPdf(mergedPdf.buffer, batch);
+    const pdfs = [mergedPdf];
 
     if (skippedDates.length) console.log(`Skipped ${skippedDates.length} date(s) outside cert period: ${skippedDates.join(", ")}`);
     console.log(`Merged ${noteCount} note(s) into 1 PDF: ${mergedName}`);
@@ -205,25 +172,47 @@ export async function runGenerator(opts) {
   }
 }
 
-// Turn note HTML into one merged, one-page-per-note A4 PDF.
+// ── THE ONE PDF LAYOUT ENGINE ───────────────────────────────────────────────
+// Every note type — regular, discharge, wound, BID/injection, correction, long
+// teaching — is rendered through THIS function and nothing else, so they all
+// get identical geometry.
+//
+// Rules (deliberate):
+//  • NO scaling. page.pdf({scale}) shrank long notes into a corner of the sheet
+//    and left the white space this replaces. Content is never zoomed.
+//  • NO margin option here. The note's own @page rule is the single source of
+//    truth, so the PDF matches what you get printing the HTML from a browser.
+//  • Viewport = full A4 at 96dpi so the form lays out at true page width.
 async function renderNotesToPdf(browser, notesHTML, mergedName) {
-  const CONTENT_W = 733, PRINTABLE_H = 1040;
+  const A4_W = 794, A4_H = 1123;        // A4 at 96dpi
   const pagePdfs = [];
+  let overflow = 0;
+
   for (const note of notesHTML) {
     const p = await browser.newPage();
-    await p.setViewport({ width: CONTENT_W, height: 1123, deviceScaleFactor: 1 });
+    await p.setViewport({ width: A4_W, height: A4_H, deviceScaleFactor: 1 });
     await p.setContent(note.html, { waitUntil: "networkidle0", timeout: 30000 });
-    await p.addStyleTag({ content: ".cols,.left,.right{page-break-inside:auto!important;break-inside:auto!important}" });
-    const contentH = await p.evaluate(() => Math.ceil(document.body.scrollHeight));
-    const scale = contentH > PRINTABLE_H ? Math.max(0.55, PRINTABLE_H / contentH) : 1;
+
     const buffer = await p.pdf({
-      format: "A4", printBackground: true,
-      margin: { top: "10mm", bottom: "10mm", left: "8mm", right: "8mm" },
-      scale, pageRanges: "1"
+      printBackground: true,
+      preferCSSPageSize: true,   // honour the note's own @page size + margins
+      pageRanges: "1"            // one note = one page
     });
+
+    // Report (don't silently truncate without telling anyone) if a note was
+    // genuinely taller than its page.
+    const pages = await p.evaluate(() => {
+      const mm = 3.7795;                        // px per mm at 96dpi
+      const usable = 1123 - (20 * mm);          // A4 height minus 10mm top+bottom
+      return Math.ceil(document.body.scrollHeight / usable);
+    });
+    if (pages > 1) { overflow++; console.log(`  ⚠ Note "${note.filename}" ran past one page — review its content.`); }
+
     await p.close();
     pagePdfs.push(Buffer.from(buffer));
   }
+  if (overflow) console.log(`  ⚠ ${overflow} note(s) exceeded one page.`);
+
   const merged = await PDFDocument.create();
   for (const buf of pagePdfs) {
     const src = await PDFDocument.load(buf);

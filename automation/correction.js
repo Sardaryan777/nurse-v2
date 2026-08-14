@@ -62,9 +62,15 @@ export async function parseCorrectionInstructions(bodyText, batchSummary) {
       "  \"do not discharge this date\" = remove discharge wording; \"last note should be discharge\" = discharge on the final chronological visit.\n" +
       "- \"regenerate all\" / \"redo everything\" sets \"regenerateAll\": true.\n\n" +
       "FIELDS you may set per note (omit any you are not changing):\n" +
-      "  painLevel (number 0-10), painLoc (string), o2Sat (string), topic (string), nurseName (string),\n" +
-      "  timeIn / timeOut (\"HH:MM AM\"), vitals {temp,hr,rr,bp,bs}, discharge (true=make this the discharge note, false=remove discharge wording),\n" +
-      "  allergies (string), diet (string),\n" +
+      "  vitals {bp,hr,rr,temp,bs,o2,weight} — use these EXACT lowercase keys. Put the value ONLY, no units:\n" +
+      "     \"BP to 150/70 mmHg, HR to 86 bpm, RR to 19/min\" -> {\"bp\":\"150/70\",\"hr\":\"86\",\"rr\":\"19\"}\n" +
+      "     \"temp 98.4\" -> {\"temp\":\"98.4\"}; \"blood sugar 142\" -> {\"bs\":\"142\"}; \"O2 96% RA\" -> {\"o2\":\"96% RA\"}; \"weight 165 lbs\" -> {\"weight\":\"165\"}\n" +
+      "  painLevel (0-10), painLoc (string), painChar (\"sharp\"|\"dull\"|\"radiating\"|\"burning\"),\n" +
+      "  topic (string), nurseName (string), timeIn / timeOut (\"HH:MM AM\"), lastBM (\"MM.DD.YY\"),\n" +
+      "  discharge (true=make this the discharge note, false=remove discharge wording),\n" +
+      "  allergies, diet, lungSounds, patientName, mrNumber, weight, o2Sat, bpArmRestriction (\"left\"|\"right\"|\"\"),\n" +
+      "  woundDesc, woundStage, woundCareOrder, dressingType, cleansingSolution, woundFrequency, injSite,\n" +
+      "  injectable {name,dose,route,frequency},\n" +
       "  checkboxes {} — set ONLY the boxes the user wants flipped, true = checked, false = unchecked.\n" +
       "    Valid checkbox keys (use these EXACT names):\n" +
       "      mental:    oriented, alert, forgetful, confusedAtTimes, anxious, depressedControlled, agitated\n" +
@@ -95,6 +101,54 @@ export async function parseCorrectionInstructions(bodyText, batchSummary) {
     unmatched: Array.isArray(data.unmatched) ? data.unmatched : [],
     summary: data.summary || ""
   };
+}
+
+// ── Vitals normalization ────────────────────────────────────────────────────
+// The note template renders bare values and appends the units itself
+// ("<u>${vs.hr}</u>bpm"), and it reads exact lowercase keys. A correction email
+// says "HR to 86 bpm", so we must map the key AND strip the unit — otherwise
+// the value lands on an unused key and the PDF silently doesn't change.
+const VITAL_KEYS = {
+  bp: ["bp", "bloodpressure", "b/p"],
+  hr: ["hr", "pulse", "heartrate", "heart"],
+  rr: ["rr", "resp", "resps", "respirations", "respiratoryrate", "respiration"],
+  temp: ["temp", "t", "temperature"],
+  bs: ["bs", "bloodsugar", "glucose", "cbg", "fsbs", "sugar"],
+  o2: ["o2", "o2sat", "spo2", "sat", "sats", "oxygen", "oxygensaturation", "pulseox"],
+  weight: ["weight", "wt"]
+};
+function canonVitalKey(k) {
+  const s = String(k || "").toLowerCase().replace(/[\s_\-./]/g, "");
+  for (const [canon, aliases] of Object.entries(VITAL_KEYS)) if (aliases.includes(s)) return canon;
+  return null;
+}
+function stripUnits(v) {
+  return String(v == null ? "" : v)
+    .replace(/mmhg|bpm|mg\/dl|breaths?|\/min|per minute|degrees?|°\s*[fc]?|lbs?\.?|pounds?|%/gi, "")
+    .replace(/\b(ra|room air|on o2)\b/gi, "")
+    .trim()
+    .replace(/[,;]+$/, "")
+    .trim();
+}
+// -> { vs:{...bare values}, o2RoomAir:bool|null, touched:[...] }
+function normalizeVitals(raw) {
+  const vs = {};
+  const touched = [];
+  let o2RoomAir = null;
+  for (const [k, v] of Object.entries(raw || {})) {
+    const key = canonVitalKey(k);
+    if (!key) continue;
+    if (key === "o2") {
+      const s = String(v);
+      if (/\bra\b|room air/i.test(s)) o2RoomAir = true;
+      else if (/on o2|nasal cannula|\blpm\b/i.test(s)) o2RoomAir = false;
+    }
+    const val = stripUnits(v);
+    if (!val) continue;
+    vs[key] = val;
+    touched.push(`${key.toUpperCase()} ${val}`);
+  }
+  return { vs, o2RoomAir, touched };
 }
 
 // Where each checkbox lives inside the POC object the note template reads.
@@ -131,9 +185,15 @@ function applyCheckboxes(poc, checkboxes) {
 // PASS 2 — rewrite ONE note's narrative so every related sentence matches the
 // corrected values (pain wording, O2, teaching topic, discharge language...).
 // Everything not covered by the correction must survive unchanged.
-async function rewriteNoteText(note, fields, poc, cbTouched = []) {
+async function rewriteNoteText(note, fields, poc, cbTouched = [], vitalsTouched = []) {
   const anthropic = client();
   const changeLines = [];
+  if (vitalsTouched.length) {
+    changeLines.push(
+      `- Vital signs are now: ${vitalsTouched.join(", ")}. If the narrative comments on vital signs, blood pressure, ` +
+      `heart rate, oxygen or blood sugar, make it consistent with these values (e.g. do not call a normal BP "elevated").`
+    );
+  }
   if (cbTouched.length) {
     changeLines.push(
       `- The following assessment findings changed: ${cbTouched.join(", ")}. ` +
@@ -193,17 +253,61 @@ export async function applyCorrections(batch, parsed) {
     const note = notes[i];
     const f = change.fields || {};
 
+    // Work on this note's OWN copy of the plan-of-care data so a correction
+    // never leaks into other notes.
+    const setPoc = (patch) => { note.poc = { ...(note.poc || poc), ...patch }; };
+    let vitalsTouched = [];
+
     // Structured field updates
     if (f.painLevel != null) note.painLevel = Number(f.painLevel);
     if (f.painLoc) note.painLoc = f.painLoc;
-    if (f.o2Sat) note.poc = { ...(note.poc || poc), o2Sat: String(f.o2Sat).replace(/[^\d.]/g, "") || note.poc?.o2Sat };
+    if (f.painChar) setPoc({ painCharOverride: String(f.painChar).toLowerCase() });
     if (f.topic) note.topic = f.topic;
     if (f.nurseName) note.nurseName = f.nurseName;
     if (f.timeIn) note.timeIn = normTime(f.timeIn);
     if (f.timeOut) note.timeOut = normTime(f.timeOut);
-    if (f.vitals) note.vs = { ...(note.vs || {}), ...f.vitals };
-    if (f.allergies) note.poc = { ...(note.poc || poc), allergies: f.allergies };
-    if (f.diet) note.poc = { ...(note.poc || poc), diet: f.diet };
+    if (f.lastBM) note.lastBM = f.lastBM;
+
+    // Vitals — normalized keys + units stripped (BP/HR/RR/T/BS/O2/weight).
+    if (f.vitals && typeof f.vitals === "object") {
+      const nv = normalizeVitals(f.vitals);
+      if (Object.keys(nv.vs).length) note.vs = { ...(note.vs || {}), ...nv.vs };
+      if (nv.o2RoomAir !== null) setPoc({ o2RoomAir: nv.o2RoomAir });
+      vitalsTouched = nv.touched;
+    }
+    // O2 given on its own. The template prefers vs.o2, so set BOTH.
+    if (f.o2Sat) {
+      const val = stripUnits(f.o2Sat);
+      if (val) {
+        note.vs = { ...(note.vs || {}), o2: val };
+        setPoc({ o2Sat: val });
+        if (/\bra\b|room air/i.test(String(f.o2Sat))) setPoc({ o2RoomAir: true });
+        else if (/on o2|nasal cannula|\blpm\b/i.test(String(f.o2Sat))) setPoc({ o2RoomAir: false });
+        vitalsTouched.push(`O2 ${val}`);
+      }
+    }
+    if (f.weight) note.vs = { ...(note.vs || {}), weight: stripUnits(f.weight) };
+
+    // Plan-of-care text fields shown on the form
+    if (f.allergies) setPoc({ allergies: f.allergies });
+    if (f.diet) setPoc({ diet: f.diet });
+    if (f.lungSounds) setPoc({ lungSounds: f.lungSounds });
+    if (f.patientName) setPoc({ patient: { ...((note.poc || poc).patient || {}), name: f.patientName } });
+    if (f.mrNumber) setPoc({ patient: { ...((note.poc || poc).patient || {}), mrNumber: f.mrNumber } });
+    if (f.bpArmRestriction != null) setPoc({ bpArmRestriction: f.bpArmRestriction });
+
+    // Wound + injection detail
+    if (f.woundDesc) setPoc({ woundDesc: f.woundDesc });
+    if (f.woundStage) setPoc({ woundStage: f.woundStage });
+    if (f.woundCareOrder) setPoc({ woundCareOrder: f.woundCareOrder });
+    if (f.dressingType) setPoc({ dressingType: f.dressingType });
+    if (f.cleansingSolution) setPoc({ cleansingSolution: f.cleansingSolution });
+    if (f.woundFrequency) setPoc({ woundFrequency: f.woundFrequency });
+    if (f.injSite) note.injSite = f.injSite;
+    if (f.injectable && typeof f.injectable === "object") {
+      setPoc({ injectable: { ...((note.poc || poc).injectable || {}), ...f.injectable, found: true } });
+    }
+
     if (f.discharge === true) { note.isLast = true; note.phase = "FINAL_DISCHARGE"; }
     if (f.discharge === false) { note.isLast = false; if (note.phase === "FINAL_DISCHARGE") note.phase = "LATE"; }
 
@@ -217,10 +321,12 @@ export async function applyCorrections(batch, parsed) {
     }
 
     // Narrative rewrite so the paragraph agrees with the new values
-    const needsRewrite = f.painLevel != null || f.o2Sat || f.topic || f.discharge != null || f.instruction || cbTouched.length;
+    const needsRewrite = f.painLevel != null || f.o2Sat || f.topic || f.discharge != null ||
+                         f.instruction || cbTouched.length || vitalsTouched.length ||
+                         f.woundDesc || f.woundCareOrder || f.dressingType || f.injSite || f.injectable;
     if (needsRewrite) {
       try {
-        note.intervention = await rewriteNoteText(note, f, note.poc || poc, cbTouched);
+        note.intervention = await rewriteNoteText(note, f, note.poc || poc, cbTouched, vitalsTouched);
       } catch (err) {
         errors.push(`Correction for ${note.dk}${note.timeIn ? " " + note.timeIn : ""} could not be rewritten: ${err.message}`);
         continue;
@@ -268,9 +374,21 @@ function describeFields(f) {
   if (f.topic) bits.push(`topic "${f.topic}"`);
   if (f.nurseName) bits.push(`nurse ${f.nurseName}`);
   if (f.timeIn || f.timeOut) bits.push(`time ${f.timeIn || ""}${f.timeOut ? "-" + f.timeOut : ""}`);
-  if (f.vitals) bits.push("vitals");
+  if (f.vitals && typeof f.vitals === "object") {
+    const nv = normalizeVitals(f.vitals);
+    if (nv.touched.length) bits.push(nv.touched.join(", "));
+  }
+  if (f.weight) bits.push(`weight ${stripUnits(f.weight)}`);
   if (f.allergies) bits.push(`allergies ${f.allergies}`);
   if (f.diet) bits.push(`diet ${f.diet}`);
+  if (f.lungSounds) bits.push(`lung sounds ${f.lungSounds}`);
+  if (f.lastBM) bits.push(`last BM ${f.lastBM}`);
+  if (f.painChar) bits.push(`pain character ${f.painChar}`);
+  if (f.patientName) bits.push(`patient ${f.patientName}`);
+  if (f.mrNumber) bits.push(`MR# ${f.mrNumber}`);
+  if (f.injSite) bits.push(`injection site ${f.injSite}`);
+  if (f.woundDesc || f.woundCareOrder || f.dressingType || f.cleansingSolution || f.woundFrequency || f.woundStage) bits.push("wound details");
+  if (f.injectable) bits.push("injectable order");
   if (f.checkboxes && Object.keys(f.checkboxes).length) {
     bits.push(Object.entries(f.checkboxes)
       .filter(([, v]) => typeof v === "boolean")
