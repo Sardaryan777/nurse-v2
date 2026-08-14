@@ -184,44 +184,45 @@ export async function runGenerator(opts) {
 //    truth, so the PDF matches what you get printing the HTML from a browser.
 //  • Viewport = full A4 at 96dpi so the form lays out at true page width.
 async function renderNotesToPdf(browser, notesHTML, mergedName) {
-  // A4 @96dpi = 794 x 1123px. The proven geometry: fixed A4 page with 8mm side
-  // and 10mm top/bottom margins, so the content box is 734 x ~1047px.
-  const CONTENT_W = 734, USABLE_H = 1040;
+  // ORIGINAL A4 geometry — the one that produced the good-looking notes:
+  // fixed A4 page, 8mm sides / 10mm top-bottom, viewport at the content width.
+  const CONTENT_W = 733;    // printable width (px @96dpi)
+  const USABLE_H  = 1040;   // printable height, with a small safety margin
   const PDF_OPTS = {
     format: "A4",
     printBackground: true,
-    margin: { top: "10mm", bottom: "10mm", left: "8mm", right: "8mm" }
+    margin: { top: "10mm", bottom: "10mm", left: "8mm", right: "8mm" },
+    pageRanges: "1"         // one note = one page
   };
 
-  // If a note is taller than the page, tighten LINE-HEIGHT and SECTION SPACING
-  // step by step until it fits. Font size never changes, and the form keeps the
-  // full page width — unlike page scaling, which shrank it into a corner.
+  // Overflow handling: tighten LINE-HEIGHT and SECTION SPACING step by step
+  // until the note fits. Font size never changes and the form keeps the full
+  // page width — unlike page scaling, which shrank it into a corner of the
+  // sheet and left the white space.
   const compactCss = (lv) => `
     .hdr{margin-bottom:${Math.max(1, 3 - lv * 0.4).toFixed(2)}pt !important}
     .cols{padding-top:${Math.max(1, 3 - lv * 0.4).toFixed(2)}pt !important}
-    .left{line-height:${Math.max(1.06, 1.28 - lv * 0.035).toFixed(3)} !important}
-    .right{line-height:${Math.max(1.08, 1.30 - lv * 0.035).toFixed(3)} !important}
-    .sec{margin-bottom:${Math.max(0.3, 1.6 - lv * 0.25).toFixed(2)}pt !important}
-    .intv{margin-bottom:${Math.max(0.3, 1.6 - lv * 0.25).toFixed(2)}pt !important;
-          line-height:${Math.max(1.06, 1.28 - lv * 0.035).toFixed(3)} !important}
-    .sm{margin-bottom:${Math.max(0.2, 1.4 - lv * 0.22).toFixed(2)}pt !important;
-        line-height:${Math.max(1.04, 1.24 - lv * 0.035).toFixed(3)} !important}
-    .bgrid{margin-top:${Math.max(1, 3 - lv * 0.4).toFixed(2)}pt !important;
-           padding-top:${Math.max(0.5, 2 - lv * 0.25).toFixed(2)}pt !important}
+    .left{line-height:${Math.max(1.08, 1.32 - lv * 0.04).toFixed(3)} !important}
+    .right{line-height:${Math.max(1.10, 1.35 - lv * 0.04).toFixed(3)} !important}
+    .sec{margin-bottom:${Math.max(0.4, 2.5 - lv * 0.35).toFixed(2)}pt !important}
+    .intv{margin-bottom:${Math.max(0.4, 2.5 - lv * 0.35).toFixed(2)}pt !important;
+          line-height:${Math.max(1.08, 1.32 - lv * 0.04).toFixed(3)} !important}
+    .sm{margin-bottom:${Math.max(0.3, 2 - lv * 0.28).toFixed(2)}pt !important;
+        line-height:${Math.max(1.06, 1.28 - lv * 0.04).toFixed(3)} !important}
+    .bgrid{margin-top:${Math.max(1, 3 - lv * 0.4).toFixed(2)}pt !important}
   `;
 
   const pagePdfs = [];
-  let compacted = 0, overflow = 0;
+  let compacted = 0;
 
   for (const note of notesHTML) {
     const p = await browser.newPage();
-    // Measure in the PRINT layout at the true content width, so what we measure
-    // is what the PDF will lay out.
     await p.setViewport({ width: CONTENT_W, height: 1123, deviceScaleFactor: 1 });
-    await p.emulateMediaType("print");
     await p.setContent(note.html, { waitUntil: "networkidle0", timeout: 30000 });
+    // Don't let the whole two-column body move as one unbreakable unit.
+    await p.addStyleTag({ content: ".cols,.left,.right{page-break-inside:auto!important;break-inside:auto!important}" });
 
-    const measure = () => p.evaluate(() => Math.ceil(document.documentElement.scrollHeight));
+    const measure = () => p.evaluate(() => Math.ceil(document.body.scrollHeight));
     let h = await measure();
     let lv = 0;
     while (h > USABLE_H && lv < 6) {
@@ -231,19 +232,11 @@ async function renderNotesToPdf(browser, notesHTML, mergedName) {
     }
     if (lv > 0) compacted++;
 
-    // Only force a single page when it genuinely fits. If a note is still too
-    // tall after maximum compaction, let it run to a 2nd page — losing the
-    // bottom of a clinical note is never the right trade.
-    const opts = { ...PDF_OPTS };
-    if (h <= USABLE_H) opts.pageRanges = "1";
-    else { overflow++; console.log(`  ⚠ "${note.filename}" still exceeds one page after compaction — kept in full across 2 pages.`); }
-
-    const buffer = await p.pdf(opts);
+    const buffer = await p.pdf(PDF_OPTS);
     await p.close();
     pagePdfs.push(Buffer.from(buffer));
   }
   if (compacted) console.log(`  ${compacted} note(s) auto-compacted to fit one page (font size unchanged).`);
-  if (overflow) console.log(`  ⚠ ${overflow} note(s) needed 2 pages.`);
 
   const merged = await PDFDocument.create();
   for (const buf of pagePdfs) {
