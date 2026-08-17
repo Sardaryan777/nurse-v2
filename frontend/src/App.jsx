@@ -772,7 +772,18 @@ html,body{
   background:#fff;
   width:100%;
 }
-.wrap{width:100%}
+/* ── Fixed page frame ──────────────────────────────────────────────────────
+   The note ALWAYS occupies the full printable A4 area (297mm - 10mm top -
+   10mm bottom = 277mm; 270mm leaves a safety margin). Without this, a note's
+   height follows its text length, so a regenerated/corrected note never
+   matches the pages around it. Now every note — short, long, original or
+   corrected — has identical page structure. */
+.wrap{width:100%;min-height:270mm;display:flex;flex-direction:column}
+.cols{flex:1 1 auto}
+/* Right column grows to full height and pins the signature block to the
+   bottom, so the footer sits in the same place on every page. */
+.right{display:flex;flex-direction:column}
+.sigrow{margin-top:auto}
 .hdr{text-align:center;margin-bottom:3pt}
 .hdr h1{font-size:14pt;font-weight:900;letter-spacing:0.5pt}
 .hdr h2{font-size:10pt;font-weight:900;letter-spacing:2pt}
@@ -945,7 +956,7 @@ ${bh(true)}Medication reconciliation</div>
 ${bh(commSup)} Supervisor ${bh(false)} Pharmacist<br>
 Re: ${commRe}</div>
 
-<div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:3px;margin-top:2px;font-size:8.4pt">
+<div class="sigrow" style="display:flex;gap:12px;align-items:flex-end;margin-bottom:3px;margin-top:2px;font-size:8.4pt">
   <div style="flex:1"><b>SN NAME</b><br><span style="font-size:8.4pt">${stripNurseTitle(snName)}</span></div>
   <div style="flex:1"><b>SN SIGNATURE</b><br><span style="border-bottom:1px solid #000;display:inline-block;width:80px">&nbsp;</span></div>
   <div style="flex:1;text-align:right"><b>NEXT MD APPOINTMENT</b><br><span style="font-size:8.4pt">As scheduled</span></div>
