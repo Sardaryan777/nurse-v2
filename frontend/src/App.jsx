@@ -703,6 +703,8 @@ function buildNoteHTML({poc, agencyName, snName, date, timeIn, timeOut, vs, topi
   const hbf = poc.homeboundFlags||{limitedEndurance:true,limitedStrength:true,assistADL:true,unevenSurfaces:true,confusion:false,unableToLeaveAlone:true,poorCoordination:false,taxingEffort:true};
   // Correction emails can override the pain character; otherwise derive it.
   const painChar = poc.painCharOverride || getPainCharacter(poc.diagnoses);
+  // Communication row: correction-supplied flags win, else the phase defaults.
+  const cm = poc.communication || {};
   // Pain medication driven ONLY by 485/POC medication list
   const _painMed = findPainMed(poc.medications);
   const painMedText = _painMed==="Tylenol" ? "Tylenol / Acetaminophen as ordered"
@@ -772,18 +774,7 @@ html,body{
   background:#fff;
   width:100%;
 }
-/* ── Fixed page frame ──────────────────────────────────────────────────────
-   The note ALWAYS occupies the full printable A4 area (297mm - 10mm top -
-   10mm bottom = 277mm; 270mm leaves a safety margin). Without this, a note's
-   height follows its text length, so a regenerated/corrected note never
-   matches the pages around it. Now every note — short, long, original or
-   corrected — has identical page structure. */
-.wrap{width:100%;min-height:270mm;display:flex;flex-direction:column}
-.cols{flex:1 1 auto}
-/* Right column grows to full height and pins the signature block to the
-   bottom, so the footer sits in the same place on every page. */
-.right{display:flex;flex-direction:column}
-.sigrow{margin-top:auto}
+.wrap{width:100%}
 .hdr{text-align:center;margin-bottom:3pt}
 .hdr h1{font-size:14pt;font-weight:900;letter-spacing:0.5pt}
 .hdr h2{font-size:10pt;font-weight:900;letter-spacing:2pt}
@@ -891,9 +882,9 @@ ${bh(false)}Grips unequal ${bh(false)}Pupils unequal<br>
 ${bh(true)}PERRLA ${bh(false)}Weakness R${bh(false)} L${bh(false)}</div>
 
 <div class="sec"><div class="st">CARDIOVASCULAR:</div>
-${bh(false)}Chest pain ${bh(false)}Palpitations ${bh(false)}Dizziness<br>
+${bh(poc.hasChestPain||false)}Chest pain ${bh(poc.hasPalpitations||false)}Palpitations ${bh(poc.hasDizziness||false)}Dizziness<br>
 Pedal pulses: ${bh(!poc.hasPVD)}Present ${bh(false)}Absent<br>
-Edema: ${bh(false)}Pitting ${bh(df.edema||false)}Non-pitting ${bh(false)} Pacer.<br>
+Edema: ${bh(poc.edemaPitting||false)}Pitting ${bh((df.edema||false)&&!poc.edemaPitting)}Non-pitting ${bh(poc.hasPacer||false)} Pacer.<br>
 ${bh(false)}1+ ${bh(false)}2+ ${bh(false)}3+ ${bh(false)}4+ ${bh(false)} Dependent<br>
 Location: ${bh(df.edema||false)}BLE${bh(false)}Dorsum R/L</div>
 
@@ -952,9 +943,9 @@ ${bh(true)}Medication reconciliation</div>
 
 
 <div class="sec sm">
-<b>COMMUNICATION: </b>${bh(false)}MD ${bh(false)}PT ${bh(false)}OT ${bh(false)}ST ${bh(false)}MS ${bh(commRN)}RN ${bh(false)}LVN ${bh(false)}CHHA<br>
-${bh(commSup)} Supervisor ${bh(false)} Pharmacist<br>
-Re: ${commRe}</div>
+<b>COMMUNICATION: </b>${bh(cm.md||false)}MD ${bh(cm.pt||false)}PT ${bh(cm.ot||false)}OT ${bh(cm.st||false)}ST ${bh(cm.ms||false)}MS ${bh(cm.rn!==undefined?cm.rn:commRN)}RN ${bh(cm.lvn||false)}LVN ${bh(cm.chha||false)}CHHA<br>
+${bh(cm.supervisor!==undefined?cm.supervisor:commSup)} Supervisor ${bh(cm.pharmacist||false)} Pharmacist<br>
+Re: ${cm.re||commRe}</div>
 
 <div class="sigrow" style="display:flex;gap:12px;align-items:flex-end;margin-bottom:3px;margin-top:2px;font-size:8.4pt">
   <div style="flex:1"><b>SN NAME</b><br><span style="font-size:8.4pt">${stripNurseTitle(snName)}</span></div>
