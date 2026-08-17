@@ -71,6 +71,11 @@ export async function parseCorrectionInstructions(bodyText, batchSummary) {
       "  allergies, diet, lungSounds, patientName, mrNumber, weight, o2Sat, bpArmRestriction (\"left\"|\"right\"|\"\"),\n" +
       "  woundDesc, woundStage, woundCareOrder, dressingType, cleansingSolution, woundFrequency, injSite,\n" +
       "  injectable {name,dose,route,frequency},\n" +
+      "  communication {md,pt,ot,st,ms,rn,lvn,chha,supervisor,pharmacist} booleans + re (string)\n" +
+      "     \"document communication with MD, RN and Supervisor\" -> {\"md\":true,\"rn\":true,\"supervisor\":true}\n" +
+      "  addMedications [\"...\"], removeMedications [\"...\"], addDiagnoses [\"...\"], removeDiagnoses [\"...\"]\n" +
+      "     \"add new medication Metoprolol\" -> addMedications:[\"Metoprolol\"]; \"add Asthma to the note\" -> addDiagnoses:[\"Asthma\"]\n" +
+      "     \"if Rosuvastatin is discontinued remove its teaching\" -> removeMedications:[\"Rosuvastatin\"] plus an instruction describing the teaching change\n" +
       "  checkboxes {} — set ONLY the boxes the user wants flipped, true = checked, false = unchecked.\n" +
       "    Valid checkbox keys (use these EXACT names):\n" +
       "      mental:    oriented, alert, forgetful, confusedAtTimes, anxious, depressedControlled, agitated\n" +
@@ -81,6 +86,8 @@ export async function parseCorrectionInstructions(bodyText, batchSummary) {
       "      equipment: hasWalker, hasCane, hasWheelchair, hasContracture, isBedbound\n" +
       "      clinical:  isDiabetic, hasWound, hasPleurX, hasParalysis, hasDysphagia, proneToAspiration,\n" +
       "                 hasTremor, hasVertigo, hasPVD, hasCaregiver, leftArmRestricted\n" +
+      "      cardiac:   hasChestPain, hasPalpitations, hasDizziness, edemaPitting, hasPacer\n" +
+      "                 (\"add palpitations to cardiovascular findings\" -> {\"hasPalpitations\":true})\n" +
       "    Map plain language to these keys, e.g. \"patient is not incontinent\" -> {\"urinaryIncontinence\":false,\"bowelIncontinence\":false};\n" +
       "    \"uses a walker not a cane\" -> {\"hasWalker\":true,\"hasCane\":false}; \"remove SOB\" -> {\"sob\":false};\n" +
       "    \"patient is alert and oriented\" -> {\"oriented\":true,\"alert\":true}.\n" +
@@ -257,6 +264,7 @@ export async function applyCorrections(batch, parsed) {
     // never leaks into other notes.
     const setPoc = (patch) => { note.poc = { ...(note.poc || poc), ...patch }; };
     let vitalsTouched = [];
+    const cbTouchedExtra = [];   // communication / medication / diagnosis edits
 
     // Structured field updates
     if (f.painLevel != null) note.painLevel = Number(f.painLevel);
@@ -308,6 +316,41 @@ export async function applyCorrections(batch, parsed) {
       setPoc({ injectable: { ...((note.poc || poc).injectable || {}), ...f.injectable, found: true } });
     }
 
+    // COMMUNICATION row (MD / PT / OT / ST / MS / RN / LVN / CHHA / Supervisor /
+    // Pharmacist + the "Re:" text). These used to be hardcoded in the form.
+    if (f.communication && typeof f.communication === "object") {
+      const cur = (note.poc || poc).communication || {};
+      setPoc({ communication: { ...cur, ...f.communication } });
+      const on = Object.entries(f.communication)
+        .filter(([k, v]) => v === true && k !== "re").map(([k]) => k.toUpperCase());
+      if (on.length) cbTouchedExtra.push(`communication: ${on.join(", ")}`);
+    }
+
+    // Medication / diagnosis list edits — these feed the teaching content and
+    // the pain-medication wording, so the narrative rewrite picks them up.
+    const listEdit = (key, add, remove) => {
+      const base = (note.poc || poc)[key];
+      let list = Array.isArray(base) ? [...base] : [];
+      for (const rm of (remove || [])) {
+        const needle = String(rm).toLowerCase();
+        list = list.filter(x => !String(x).toLowerCase().includes(needle));
+      }
+      for (const ad of (add || [])) {
+        if (!list.some(x => String(x).toLowerCase().includes(String(ad).toLowerCase()))) list.push(ad);
+      }
+      setPoc({ [key]: list });
+    };
+    if (f.addMedications?.length || f.removeMedications?.length) {
+      listEdit("medications", f.addMedications, f.removeMedications);
+      if (f.addMedications?.length) cbTouchedExtra.push(`medication added: ${f.addMedications.join(", ")}`);
+      if (f.removeMedications?.length) cbTouchedExtra.push(`medication removed: ${f.removeMedications.join(", ")}`);
+    }
+    if (f.addDiagnoses?.length || f.removeDiagnoses?.length) {
+      listEdit("diagnoses", f.addDiagnoses, f.removeDiagnoses);
+      if (f.addDiagnoses?.length) cbTouchedExtra.push(`diagnosis added: ${f.addDiagnoses.join(", ")}`);
+      if (f.removeDiagnoses?.length) cbTouchedExtra.push(`diagnosis removed: ${f.removeDiagnoses.join(", ")}`);
+    }
+
     if (f.discharge === true) { note.isLast = true; note.phase = "FINAL_DISCHARGE"; }
     if (f.discharge === false) { note.isLast = false; if (note.phase === "FINAL_DISCHARGE") note.phase = "LATE"; }
 
@@ -319,6 +362,7 @@ export async function applyCorrections(batch, parsed) {
       note.poc = res.poc;
       cbTouched = res.touched;
     }
+    cbTouched = cbTouched.concat(cbTouchedExtra);
 
     // Narrative rewrite so the paragraph agrees with the new values
     const needsRewrite = f.painLevel != null || f.o2Sat || f.topic || f.discharge != null ||
@@ -389,6 +433,15 @@ function describeFields(f) {
   if (f.injSite) bits.push(`injection site ${f.injSite}`);
   if (f.woundDesc || f.woundCareOrder || f.dressingType || f.cleansingSolution || f.woundFrequency || f.woundStage) bits.push("wound details");
   if (f.injectable) bits.push("injectable order");
+  if (f.communication) {
+    const on = Object.entries(f.communication).filter(([k, v]) => v === true && k !== "re").map(([k]) => k.toUpperCase());
+    if (on.length) bits.push(`communication ${on.join("/")}`);
+    if (f.communication.re) bits.push(`Re: ${f.communication.re}`);
+  }
+  if (f.addMedications?.length) bits.push(`+med ${f.addMedications.join(", ")}`);
+  if (f.removeMedications?.length) bits.push(`−med ${f.removeMedications.join(", ")}`);
+  if (f.addDiagnoses?.length) bits.push(`+dx ${f.addDiagnoses.join(", ")}`);
+  if (f.removeDiagnoses?.length) bits.push(`−dx ${f.removeDiagnoses.join(", ")}`);
   if (f.checkboxes && Object.keys(f.checkboxes).length) {
     bits.push(Object.entries(f.checkboxes)
       .filter(([, v]) => typeof v === "boolean")
