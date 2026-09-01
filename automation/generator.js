@@ -221,14 +221,10 @@ async function buildWordDoc(browser, notesHTML, filename) {
   await p.close();
 
   // One document, one note per page.
-  const html =
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + styleBlock +
-    "
-.pgbrk{page-break-before:always}
-table{border-collapse:collapse}
-</style></head><body>" +
-    bodies.map((b, i) => (i ? '<div class="pgbrk"></div>' + b : b)).join("") +
-    "</body></html>";
+  const css = '.pgbrk{page-break-before:always}table{border-collapse:collapse}';
+  const head = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + styleBlock + css + '</style></head><body>';
+  const body = bodies.map((b, i) => (i ? '<div class="pgbrk"></div>' + b : b)).join("");
+  const html = head + body + '</body></html>';
 
   // A4 in TWIPs (1mm = 56.7): 210x297mm page, 8mm sides / 10mm top-bottom.
   const buffer = await HTMLtoDOCX(html, null, {
