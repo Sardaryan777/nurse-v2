@@ -8,6 +8,7 @@ import os from "os";
 import path from "path";
 import { PDFDocument } from "pdf-lib";
 import { embedBatchInPdf } from "./batchstore.js";
+import HTMLtoDOCX from "html-to-docx";
 
 const launchOpts = {
   headless: "new",
@@ -68,10 +69,11 @@ async function waitForSettle(page, timeout) {
  * @param {Object} [opts.nurses]       { "MM/DD/YYYY": "Nurse Name / LVN" } per-visit nurses
  * @param {boolean} [opts.bid]         "BID" in email subject -> check BID Patient box
  * @param {boolean} [opts.wound]       "Wound" in email subject -> check Wound mode box
+ * @param {boolean} [opts.word]        "Word" in email subject -> deliver .docx instead of PDF
  * @returns {Promise<{pdfs:Array,noteCount:number,skippedDates:string[],certPeriod:object}>}
  */
 export async function runGenerator(opts) {
-  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, visits, nurses = {}, bid = false, wound = false } = opts;
+  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, visits, nurses = {}, bid = false, wound = false, word = false } = opts;
 
   // Write PDF to a temp file so the native file input can accept it.
   const tmpPdf = path.join(os.tmpdir(), `poc-${Date.now()}.pdf`);
@@ -154,14 +156,19 @@ export async function runGenerator(opts) {
     // Name the combined file after the patient.
     const pm = (notesHTML[0]?.filename || "").match(/^Note-(.+?)-\d{2}-\d{2}-\d{4}/i);
     const patientTag = pm ? pm[1] : "patient";
-    const mergedName = `Notes-${patientTag}-${noteCount}-visits.pdf`;
+    const baseName = `Notes-${patientTag}-${noteCount}-visits`;
 
-    const mergedPdf = await renderNotesToPdf(browser, notesHTML, mergedName);
-
-    // Tuck the structured batch into the PDF's metadata so a later Correction
-    // email can work from this exact file — no extra attachment needed.
-    mergedPdf.buffer = await embedBatchInPdf(mergedPdf.buffer, batch);
-    const pdfs = [mergedPdf];
+    let pdfs;
+    if (word) {
+      // Editable Word document instead of PDF.
+      pdfs = [await buildWordDoc(browser, notesHTML, `${baseName}.docx`)];
+    } else {
+      const mergedPdf = await renderNotesToPdf(browser, notesHTML, `${baseName}.pdf`);
+      // Tuck the structured batch into the PDF's metadata so a later Correction
+      // email can work from this exact file — no extra attachment needed.
+      mergedPdf.buffer = await embedBatchInPdf(mergedPdf.buffer, batch);
+      pdfs = [mergedPdf];
+    }
 
     if (skippedDates.length) console.log(`Skipped ${skippedDates.length} date(s) outside cert period: ${skippedDates.join(", ")}`);
     console.log(`Merged ${noteCount} note(s) into 1 PDF: ${mergedName}`);
@@ -170,6 +177,69 @@ export async function runGenerator(opts) {
     await browser.close();
     fs.unlink(tmpPdf).catch(() => {});
   }
+}
+
+// ── WORD (.docx) OUTPUT ─────────────────────────────────────────────────────
+// Subject contains "Word" -> deliver editable .docx instead of PDF.
+// Word has no flexbox, so the two-column body is rebuilt as a TABLE (which Word
+// renders correctly). Everything else — fonts, checkboxes, sizes — is unchanged.
+async function buildWordDoc(browser, notesHTML, filename) {
+  const p = await browser.newPage();
+  const bodies = [];
+  let styleBlock = "";
+
+  for (const note of notesHTML) {
+    await p.setContent(note.html, { waitUntil: "domcontentloaded", timeout: 30000 });
+    const res = await p.evaluate(() => {
+      const cols = document.querySelector(".cols");
+      if (cols) {
+        const left = cols.querySelector(".left");
+        const right = cols.querySelector(".right");
+        const tbl = document.createElement("table");
+        tbl.setAttribute("width", "100%");
+        tbl.setAttribute("cellspacing", "0");
+        tbl.setAttribute("cellpadding", "0");
+        tbl.style.cssText = "width:100%;border-collapse:collapse;border-top:2pt solid #000";
+        const tr = document.createElement("tr");
+        const td1 = document.createElement("td");
+        td1.setAttribute("width", "40%");
+        td1.style.cssText = "width:40%;vertical-align:top;padding-right:6pt;border-right:1pt solid #666;font-size:8.2pt;line-height:1.32";
+        td1.innerHTML = left ? left.innerHTML : "";
+        const td2 = document.createElement("td");
+        td2.setAttribute("width", "60%");
+        td2.style.cssText = "width:60%;vertical-align:top;padding-left:6pt;font-size:8.4pt;line-height:1.35";
+        td2.innerHTML = right ? right.innerHTML : "";
+        tr.appendChild(td1); tr.appendChild(td2); tbl.appendChild(tr);
+        cols.replaceWith(tbl);
+      }
+      const st = document.querySelector("style");
+      return { body: document.body.innerHTML, style: st ? st.innerHTML : "" };
+    });
+    if (!styleBlock) styleBlock = res.style;
+    bodies.push(res.body);
+  }
+  await p.close();
+
+  // One document, one note per page.
+  const html =
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + styleBlock +
+    "
+.pgbrk{page-break-before:always}
+table{border-collapse:collapse}
+</style></head><body>" +
+    bodies.map((b, i) => (i ? '<div class="pgbrk"></div>' + b : b)).join("") +
+    "</body></html>";
+
+  // A4 in TWIPs (1mm = 56.7): 210x297mm page, 8mm sides / 10mm top-bottom.
+  const buffer = await HTMLtoDOCX(html, null, {
+    orientation: "portrait",
+    pageSize: { width: 11906, height: 16838 },
+    margins: { top: 567, bottom: 567, left: 454, right: 454 },
+    font: "Times New Roman",
+    fontSize: 17          // half-points ~= 8.5pt base
+  });
+  console.log(`Built Word document: ${filename} (${notesHTML.length} note(s)).`);
+  return { filename, buffer: Buffer.from(buffer), mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
 }
 
 // ── THE ONE PDF LAYOUT ENGINE ───────────────────────────────────────────────

@@ -343,6 +343,10 @@ async function processMessage(gmail, messageRef) {
   const wound = /\bwound\b/i.test(msg.subject || "");
   if (wound) log(`  "Wound" in subject → Wound mode ON.`);
 
+  // "Word" in the SUBJECT → deliver an editable .docx instead of a PDF.
+  const word = /\bword\b/i.test(msg.subject || "");
+  if (word) log(`  "Word" in subject → Word (.docx) output.`);
+
   // 5. Drive the generator site -> ONE merged PDF (+ any dates skipped for cert period).
   const { pdfs, noteCount = 0, skippedDates = [], certPeriod = { start: "", end: "" }, batch = null } = await runGenerator({
     url: GENERATOR_URL,
@@ -353,7 +357,8 @@ async function processMessage(gmail, messageRef) {
     visits,
     nurses,
     bid,
-    wound
+    wound,
+    word
   });
 
   const certLabel = (certPeriod.start || certPeriod.end)
@@ -378,7 +383,7 @@ async function processMessage(gmail, messageRef) {
   } else {
     // All notes are combined into ONE merged PDF (oldest → newest).
     let text =
-      `Hello,\n\nAttached is 1 combined PDF containing the ${noteCount} generated clinical note${noteCount > 1 ? "s" : ""} ` +
+      `Hello,\n\nAttached is 1 combined ${word ? "Word document" : "PDF"} containing the ${noteCount} generated clinical note${noteCount > 1 ? "s" : ""} ` +
       `for ${nurseLabel}${agencyName ? " (" + agencyName + ")" : ""}${bid ? " (BID patient)" : ""}.\n\n` +
       `Visit dates generated (oldest → newest): ${dates.filter(d => !skippedDates.includes(d)).join(", ")}\n`;
     if (skippedDates.length) {
@@ -386,11 +391,17 @@ async function processMessage(gmail, messageRef) {
         `\n⚠️ The following date(s) were NOT generated because they fall OUTSIDE the ` +
         `certification period (${certLabel}):\n${skippedDates.join(", ")}\n`;
     }
-    text += `\nTo correct any of these notes, just reply to this email with "Correction" in the subject and say what should change.\n`;
+    text += word
+      ? `
+This is an editable Word document. Note: email corrections work from the PDF version — if you may need corrections later, resend without "Word" in the subject to get a PDF copy too.
+`
+      : `
+To correct any of these notes, just reply to this email with "Correction" in the subject and say what should change.
+`;
     text += `\n— Automated Clinical Note Generator`;
     // Single clean attachment: the batch data is hidden inside the PDF itself.
     await replyWithAttachments(gmail, msg, { text, attachments: pdfs });
-    log(`  Replied with 1 merged PDF (${noteCount} note${noteCount > 1 ? "s" : ""})${batch ? " [batch embedded]" : ""}.${skippedDates.length ? ` Skipped ${skippedDates.length} out-of-period date(s).` : ""}`);
+    log(`  Replied with 1 ${word ? "Word doc" : "merged PDF"} (${noteCount} note${noteCount > 1 ? "s" : ""})${batch && !word ? " [batch embedded]" : ""}.${skippedDates.length ? ` Skipped ${skippedDates.length} out-of-period date(s).` : ""}`);
   }
 
   // Already marked read + recorded up front (see LOCK above).
