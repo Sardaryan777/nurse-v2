@@ -279,7 +279,9 @@ async function buildWordDoc(browser, notesHTML, filename) {
         }
 
         const tr = document.createElement("tr");
-        tr.style.cssText = "page-break-inside:auto";
+        // setAttribute keeps the literal text; .style.cssText would let Chrome
+        // rewrite "page-break-inside" to "break-inside", which Word ignores.
+        tr.setAttribute("style", "page-break-inside:auto;break-inside:auto");
         const td1 = document.createElement("td");
         td1.setAttribute("width", "40%");
         td1.style.cssText = "width:40%;vertical-align:top;padding-right:6pt;border-right:1pt solid #666;border-top:2pt solid #000;font-size:8.2pt;line-height:1.32";
@@ -306,7 +308,14 @@ async function buildWordDoc(browser, notesHTML, filename) {
         return chunk.slice(j);
       }).join("");
       // These would make Word shove whole blocks onto the next page.
-      css += " .sec,.intv,.sm,.bgrid{page-break-inside:auto !important}";
+      // Word-only: legacy break property, plus a small spacing trim because
+      // Word renders looser than Chrome. Font sizes are untouched.
+      css += " .sec,.intv,.sm,.bgrid,.left,.right,tr,td{page-break-inside:auto !important}";
+      css += " .left{line-height:1.24 !important} .right{line-height:1.26 !important}";
+      css += " .sec{margin-bottom:1.6pt !important}";
+      css += " .intv{margin-bottom:1.6pt !important;line-height:1.24 !important}";
+      css += " .sm{margin-bottom:1.4pt !important;line-height:1.22 !important}";
+      css += " .hdr{margin-bottom:2pt !important}";
       return { body: document.body.innerHTML, style: css };
     });
     if (!styleBlock) styleBlock = res.style;
