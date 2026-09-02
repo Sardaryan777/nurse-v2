@@ -827,7 +827,6 @@ html,body{
 }
 </style>
 </head>
-</head>
 <body>
 <div class="wrap">
 <div class="hdr"><h1>${agencyName}</h1><h2>CLINICAL NOTE</h2></div>
@@ -1441,7 +1440,7 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 16, ready: true,
+      version: 17, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
