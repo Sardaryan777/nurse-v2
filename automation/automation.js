@@ -320,7 +320,11 @@ async function processMessage(gmail, messageRef) {
   log(`  Agency: ${agencyName || "(none found)"}`);
 
   // 4. Nurses + visits from the email body (each visit may have its own nurse).
-  const { nurseName, visits, noteCount: requestedNotes = 0 } = await extractVisitsFromEmail(msg.bodyText || "");
+  // Log exactly what text we parsed - when nothing is found this shows
+  // immediately whether the body arrived at all.
+  const bodyPreview = String(msg.bodyText || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  log(`  Email body (first 200 chars): ${bodyPreview || "(EMPTY)"}`);
+  const { nurseName, visits, noteCount: requestedNotes = 0 } = await extractVisitsFromEmail(msg.bodyText || "", msg.subject || "");
   const uniqueNurses = [...new Set(visits.map(v => v.nurseName).filter(Boolean))];
   log(`  Default nurse: ${nurseName || "(none)"} · Visits: ${visits.length} · Nurses on schedule: ${uniqueNurses.join(", ") || "(none)"}`);
   if (!visits.length && !requestedNotes) {
@@ -333,6 +337,8 @@ async function processMessage(gmail, messageRef) {
       "Send either:", 
       "  - the visit dates (and times), one per line, or",
       "  - how many notes you need, e.g. \"9 notes\" (the DATE and TIME fields are left blank).", "",
+      "For reference, this is the message text that was received:",
+      "  " + (bodyPreview || "(the message body was empty)"), "",
       "- Automated Clinical Note Generator"
     ].join(NL);
     await replyWithAttachments(gmail, msg, { text: why, attachments: [] });

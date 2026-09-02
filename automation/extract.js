@@ -127,7 +127,7 @@ export async function extractAgencyName(pdfBuffer) {
 // Extract every visit (date, time in, time out, nurse) from the email body.
 // Each visit line may carry its OWN nurse name; a nurse applies to all visits
 // only when the email names exactly one nurse.
-export async function extractVisitsFromEmail(bodyText) {
+export async function extractVisitsFromEmail(bodyText, subject = "") {
   const anthropic = client();
   const today = new Date();
   const resp = await anthropic.messages.create({
@@ -172,7 +172,8 @@ export async function extractVisitsFromEmail(bodyText) {
   // No dates, just a count ("9 notes") -> caller generates that many
   // undated notes.
   let noteCount = Number(data.noteCount) > 0 ? Math.min(60, Math.floor(Number(data.noteCount))) : 0;
-  if (!visits.length && !noteCount) noteCount = countFromText(bodyText);
+  // Count can appear in the body OR the subject ("Word 9 notes").
+  if (!visits.length && !noteCount) noteCount = countFromText(bodyText) || countFromText(subject);
   return { nurseName: defaultNurse, visits, noteCount };
 }
 
