@@ -304,6 +304,40 @@ async function buildWordDoc(browser, notesHTML, filename) {
         tr.appendChild(td1); tr.appendChild(td2); tbl.appendChild(tr);
         cols.replaceWith(tbl);
       }
+      // Word supports NEITHER flexbox NOR grid. Convert every remaining
+      // flex/grid container (.sigrow signature row, .bgrid patient/date/time
+      // footer) into a one-row table so the items stay side by side instead of
+      // stacking - stacking is what made each note overflow onto a second page.
+      const depthOf = (el) => { let d = 0; while (el.parentElement) { d++; el = el.parentElement; } return d; };
+      const containers = Array.from(document.querySelectorAll("div,section,header,footer")).filter((el) => {
+        const d = getComputedStyle(el).display;
+        return (d === "flex" || d === "inline-flex" || d === "grid" || d === "inline-grid") && el.children.length > 1;
+      });
+      containers.sort((a, b) => depthOf(b) - depthOf(a));   // deepest first
+      for (const el of containers) {
+        const kids = Array.from(el.children);
+        const cs = getComputedStyle(el);
+        const valign = (cs.alignItems === "flex-end" || cs.alignItems === "end") ? "bottom" : "top";
+        const tbl = document.createElement("table");
+        tbl.className = el.className;
+        tbl.setAttribute("width", "100%");
+        tbl.setAttribute("cellspacing", "0");
+        tbl.setAttribute("cellpadding", "0");
+        tbl.setAttribute("style", "width:100%;border-collapse:collapse;display:table");
+        const tr = document.createElement("tr");
+        const w = (100 / kids.length).toFixed(2);
+        for (const k of kids) {
+          const td = document.createElement("td");
+          td.setAttribute("width", w + "%");
+          const ta = k.style.textAlign ? "text-align:" + k.style.textAlign + ";" : "";
+          td.setAttribute("style", "width:" + w + "%;vertical-align:" + valign + ";" + ta + "padding-right:4pt");
+          td.innerHTML = k.innerHTML;
+          tr.appendChild(td);
+        }
+        tbl.appendChild(tr);
+        el.replaceWith(tbl);
+      }
+
       const st = document.querySelector("style");
       // Word cannot parse @page / @media rules - drop them, keep the rest.
       let css = st ? st.innerHTML : "";
@@ -322,6 +356,7 @@ async function buildWordDoc(browser, notesHTML, filename) {
       // Word-only: use the legacy break property Word understands, and stop
       // Word applying its own Heading styles to h1/h2.
       css += " .sec,.intv,.sm,.bgrid,.left,.right,tr,td{page-break-inside:auto !important}";
+      css += " .bgrid,.sigrow,.cols{display:table !important;width:100% !important}";
       css += " h1,h2,h3{margin:0 !important;padding:0 !important;line-height:1.15 !important;font-family:inherit !important}";
       return { body: document.body.innerHTML, style: css };
     });
