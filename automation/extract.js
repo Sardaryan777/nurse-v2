@@ -131,7 +131,8 @@ export async function extractVisitsFromEmail(bodyText) {
   }
   // No dates, just a count ("9 notes") -> caller generates that many
   // undated notes.
-  const noteCount = Number(data.noteCount) > 0 ? Math.min(60, Math.floor(Number(data.noteCount))) : 0;
+  let noteCount = Number(data.noteCount) > 0 ? Math.min(60, Math.floor(Number(data.noteCount))) : 0;
+  if (!visits.length && !noteCount) noteCount = countFromText(bodyText);
   return { nurseName: defaultNurse, visits, noteCount };
 }
 
@@ -141,4 +142,25 @@ export function splitTime(t) {
   const m = String(t).match(/(\d{1,2}):(\d{2})\s*([AaPp][Mm])/);
   if (!m) return { h: null, m: 0, ap: "AM" };
   return { h: parseInt(m[1], 10), m: parseInt(m[2], 10), ap: m[3].toUpperCase() };
+}
+
+// Local fallback: pull a note count straight from the email text. The model is
+// asked for this too, but a plain "9 notes" must never depend on that alone.
+export function countFromText(text) {
+  const t = String(text || "").toLowerCase();
+  const words = { one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,
+                  eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,
+                  seventeen:17,eighteen:18,nineteen:19,twenty:20 };
+  // "9 notes", "9 visits", "(9 notes)"
+  let m = t.match(/(\d{1,2})\s*(?:notes?|visits?)/);
+  if (m) return Math.min(60, parseInt(m[1], 10));
+  // "nine notes"
+  m = t.match(/([a-z]+)\s*(?:notes?|visits?)/);
+  if (m && words[m[1]]) return words[m[1]];
+  // a message that is just a number
+  const bare = t.replace(/[^0-9]/g, "");
+  const only = t.replace(/[^a-z0-9]/g, "");
+  if (bare && only === bare && bare.length <= 2) return Math.min(60, parseInt(bare, 10));
+  if (words[only]) return words[only];
+  return 0;
 }

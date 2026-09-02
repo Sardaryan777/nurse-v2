@@ -324,7 +324,19 @@ async function processMessage(gmail, messageRef) {
   const uniqueNurses = [...new Set(visits.map(v => v.nurseName).filter(Boolean))];
   log(`  Default nurse: ${nurseName || "(none)"} · Visits: ${visits.length} · Nurses on schedule: ${uniqueNurses.join(", ") || "(none)"}`);
   if (!visits.length && !requestedNotes) {
-    log("  No visit dates and no note count found in email body — skipping (leaving unread for manual review).");
+    // Do NOT fail silently: the email is already marked read, so say why.
+    const NL = String.fromCharCode(10);
+    const why = [
+      "Hello,", "",
+      "No notes were generated because the email body did not contain any visit dates,",
+      "and no note count either.", "",
+      "Send either:", 
+      "  - the visit dates (and times), one per line, or",
+      "  - how many notes you need, e.g. \"9 notes\" (the DATE and TIME fields are left blank).", "",
+      "- Automated Clinical Note Generator"
+    ].join(NL);
+    await replyWithAttachments(gmail, msg, { text: why, attachments: [] });
+    log("  No dates and no note count — replied asking for dates or a count.");
     return;
   }
   if (!visits.length) {
@@ -416,6 +428,28 @@ To correct any of these notes, just reply to this email with "Correction" in the
   log(`  Done.`);
 }
 
+// Tell the sender when a request could not be completed. Without this a crash
+// leaves the email marked read and the user waiting for a reply that never comes.
+async function notifyFailure(gmail, messageId, err) {
+  try {
+    const msg = await getMessageDetails(gmail, messageId);
+    const NL = String.fromCharCode(10);
+    const text = [
+      "Hello,", "",
+      "Your request could not be completed.", "",
+      "Reason: " + (err && err.message ? err.message : "unknown error"), "",
+      "Nothing was generated for this email. Please check the attachment and the visit dates",
+      "(or note count) and send it again. If this keeps happening, forward this message so the",
+      "error above can be investigated.", "",
+      "- Automated Clinical Note Generator"
+    ].join(NL);
+    await replyWithAttachments(gmail, msg, { text, attachments: [] });
+    log(`  Sent failure notice to ${msg.from}.`);
+  } catch (e) {
+    log(`  Could not send failure notice: ${e.message}`);
+  }
+}
+
 async function pollOnce() {
   const gmail = getGmail();
   const messages = await findUnreadWithPdf(gmail);
@@ -429,7 +463,9 @@ async function pollOnce() {
       await processMessage(gmail, ref);
     } catch (err) {
       log(`ERROR processing ${ref.id}: ${err.message}`);
-      // leave the email unread so it can be retried / handled manually
+      // A failure must never be silent: the email was already marked read, so
+      // without this the request would just vanish with no reply.
+      await notifyFailure(gmail, ref.id, err);
     }
   }
 }
