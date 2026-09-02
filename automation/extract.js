@@ -11,6 +11,27 @@ function client() {
 // Tolerant JSON parser: strips markdown fences, isolates the object, and tries
 // several light repairs (trailing commas, missing commas between objects) before
 // giving up. Models occasionally emit slightly-off JSON; this recovers it.
+
+// Pull every top-level {...} block out of a response. Models sometimes emit two
+// objects with commentary between them ("Wait, let me re-read the rules..."), and
+// naively slicing from the first { to the last } swallows the prose and fails.
+export function extractJsonObjects(t) {
+  const out = [];
+  let depth = 0, start = -1, inStr = false, esc = false, quote = "";
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (inStr) {
+      if (esc) { esc = false; continue; }
+      if (c === "\\") { esc = true; continue; }
+      if (c === quote) inStr = false;
+      continue;
+    }
+    if (c === "\"" || c === "'") { inStr = true; quote = c; continue; }
+    if (c === "{") { if (depth === 0) start = i; depth++; }
+    else if (c === "}") { depth--; if (depth === 0 && start >= 0) { out.push(t.slice(start, i + 1)); start = -1; } }
+  }
+  return out;
+}
 function parseJSON(text) {
   let t = String(text).trim();
   t = t.replace(/```json/gi, "").replace(/```/g, "").trim();
@@ -27,6 +48,24 @@ function parseJSON(text) {
   ];
   for (const a of attempts) {
     try { return JSON.parse(a); } catch { /* try next */ }
+  }
+
+  // The response may hold SEVERAL objects (model second-guessing itself). Parse
+  // each one and keep the most complete answer.
+  const candidates = [];
+  for (const obj of extractJsonObjects(t)) {
+    for (const variant of [obj, obj.replace(/,\s*([}\]])/g, "$1")]) {
+      try { candidates.push(JSON.parse(variant)); break; } catch { /* next */ }
+    }
+  }
+  if (candidates.length) {
+    candidates.sort((a, b) => {
+      const av = Array.isArray(a.visits) ? a.visits.length : -1;
+      const bv = Array.isArray(b.visits) ? b.visits.length : -1;
+      if (bv !== av) return bv - av;
+      return (Number(b.noteCount) || 0) - (Number(a.noteCount) || 0);
+    });
+    return candidates[0];
   }
 
   // Last resort: the response was TRUNCATED mid-list (long schedules can hit the
@@ -112,10 +151,11 @@ export async function extractVisitsFromEmail(bodyText) {
       'Return ONLY compact JSON of the exact form: ' +
       '{"nurseName":"","visits":[{"date":"MM/DD/YYYY","timeIn":"HH:MM AM","timeOut":"HH:MM PM","nurseName":""}]} ' +
       "where the top-level nurseName is the default/primary nurse (or the only one). " +
-      "IF THE EMAIL GIVES NO DATES AT ALL but asks for a NUMBER of notes (e.g. \"9\", \"8 notes\", \"make nine visits\"), return an empty visits array and set noteCount to that number: "
-      + '{"nurseName":"","visits":[],"noteCount":9}. ' +
-      "Written-out numbers count (nine -> 9). Use noteCount only when there are no dates. " +
-      "No markdown, no backticks, no commentary.",
+      "If the email gives NO dates but names a NUMBER of notes, put that number in noteCount "
+      + 'and leave visits empty: {"nurseName":"","visits":[],"noteCount":9}. ' +
+      "Written-out numbers count (nine -> 9). If there are no dates AND no number, use noteCount 0. " +
+      "OUTPUT FORMAT IS ABSOLUTE: reply with ONE JSON object only. Start at { and stop at the matching }. " +
+      "Never write explanations, reasoning, corrections, or a second object. No markdown, no backticks.",
     messages: [{ role: "user", content: `Email body:\n\n${bodyText}` }]
   });
   const text = (resp.content || []).map(b => b.text || "").join("");

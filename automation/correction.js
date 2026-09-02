@@ -9,6 +9,7 @@
 //   2. rewriteNote                 — apply changes to ONE note, keeping the rest
 //      of that note's clinical content intact and internally consistent.
 import Anthropic from "@anthropic-ai/sdk";
+import { extractJsonObjects } from "./extract.js";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -24,6 +25,18 @@ function parseJSON(text) {
   const body = t.slice(s, e + 1);
   for (const a of [body, body.replace(/,\s*([}\]])/g, "$1")]) {
     try { return JSON.parse(a); } catch { /* next */ }
+  }
+  // The model may have emitted several objects with commentary between them.
+  const found = [];
+  for (const obj of extractJsonObjects(t)) {
+    for (const v of [obj, obj.replace(/,\s*([}\]])/g, "$1")]) {
+      try { found.push(JSON.parse(v)); break; } catch { /* next */ }
+    }
+  }
+  if (found.length) {
+    found.sort((a, b) => (Array.isArray(b.changes) ? b.changes.length : -1) -
+                         (Array.isArray(a.changes) ? a.changes.length : -1));
+    return found[0];
   }
   throw new Error("Could not parse correction JSON: " + body.slice(0, 300));
 }
