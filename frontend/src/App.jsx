@@ -982,6 +982,7 @@ export default function App() {
   const [dates,      setDates]      = useState([]);
   const [dateTimes,  setDateTimes]  = useState({});
   const [skippedDates, setSkippedDates] = useState([]); // visit dates outside the cert period (not generated)
+  const [blankDates, setBlankDates] = useState(false); // "9 notes" with no dates -> leave DATE / TIME blank
   const [previewVS,  setPreviewVS]  = useState(()=>pickVS());
   const [bidPatient, setBidPatient] = useState(false);
   const [autoAMPM,   setAutoAMPM]   = useState(false);
@@ -1433,7 +1434,7 @@ export default function App() {
 
   // ── AUTOMATION BRIDGE ──────────────────────────────────────────────────────
   const noteToHTML = (n) => {
-    const html = buildNoteHTML({poc:n.poc, agencyName, snName:n.nurseName||snName, date:n.dk, timeIn:n.timeIn||"", timeOut:n.timeOut||"", vs:n.vs, topic:n.topic, intervention:n.intervention, lastBM:n.lastBM, isLastNote:n.isLast, painLevel:n.painLevel, phase:n.phase, painLoc:n.painLoc});
+    const html = buildNoteHTML({poc:n.poc, agencyName, snName:n.nurseName||snName, date: blankDates ? "" : n.dk, timeIn: blankDates ? "" : (n.timeIn||""), timeOut: blankDates ? "" : (n.timeOut||""), vs:n.vs, topic:n.topic, intervention:n.intervention, lastBM:n.lastBM, isLastNote:n.isLast, painLevel:n.painLevel, phase:n.phase, painLoc:n.painLoc});
     const tag = n.timeIn ? "-"+n.timeIn.replace(":","") : "";
     const filename = `Note-${(n.poc?.patient?.name||"patient").replace(/[\s,]+/g,"-")}-${n.dk.replace(/\//g,"-")}${tag}.html`;
     return { filename, html };
@@ -1445,6 +1446,8 @@ export default function App() {
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
       setWound: (v) => { setWoundMode(!!v); if (v) setShowWoundFields(true); },
+      // Undated batch: generate N notes but print no DATE / TIME IN-OUT.
+      setBlankDates: (v) => setBlankDates(!!v),
       // Full visit list, duplicates allowed (AM+PM). Each visit may carry its
       // own nurseName — flows straight into the bulk entries the app uses.
       setVisits: (list) => {
@@ -1489,13 +1492,13 @@ export default function App() {
       getState: () => ({
         hasFile: !!file, extracting, generating, hasPoc: !!poc,
         agency: agencyName, nurse: snName, dates: dates.map(fmtDate),
-        bid: bidPatient, wound: woundMode, bulkCount: bulkEntries.length,
+        bid: bidPatient, wound: woundMode, blankDates, bulkCount: bulkEntries.length,
         certPeriod: { start: poc?.certPeriodStart || "", end: poc?.certPeriodEnd || "" },
         skippedDates, noteCount: notes.length, status: genStatus, error
       }),
       getNotesHTML: () => notes.map(noteToHTML)
     };
-  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, skippedDates, bidPatient, woundMode, bulkEntries, notes, genStatus, error]);
+  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, skippedDates, blankDates, bidPatient, woundMode, bulkEntries, notes, genStatus, error]);
 
   // Stage badge
   const stageBadge = poc ? {
