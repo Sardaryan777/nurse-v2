@@ -272,7 +272,18 @@ async function buildWordDoc(browser, notesHTML, filename) {
           const tdH = document.createElement("td");
           tdH.setAttribute("colspan", "2");
           tdH.style.cssText = "text-align:center;padding-bottom:3pt";
-          tdH.innerHTML = hdr.innerHTML;
+          // Word maps <h1>/<h2> to its built-in Heading styles, which add large
+          // fonts and space-before/after and blow the header up. Emit plain divs
+          // with the exact sizes instead.
+          const h1 = hdr.querySelector("h1");
+          const h2 = hdr.querySelector("h2");
+          const line = (txt, size, spacing) =>
+            "<div style=" + String.fromCharCode(39) +
+            "font-size:" + size + ";font-weight:bold;letter-spacing:" + spacing +
+            ";margin:0;padding:0;line-height:1.15" + String.fromCharCode(39) + ">" + txt + "</div>";
+          tdH.innerHTML =
+            (h1 ? line(h1.textContent, "14pt", "0.5pt") : "") +
+            (h2 ? line(h2.textContent, "10pt", "2pt") : "");
           trH.appendChild(tdH);
           tbl.appendChild(trH);
           hdr.remove();
@@ -308,14 +319,10 @@ async function buildWordDoc(browser, notesHTML, filename) {
         return chunk.slice(j);
       }).join("");
       // These would make Word shove whole blocks onto the next page.
-      // Word-only: legacy break property, plus a small spacing trim because
-      // Word renders looser than Chrome. Font sizes are untouched.
+      // Word-only: use the legacy break property Word understands, and stop
+      // Word applying its own Heading styles to h1/h2.
       css += " .sec,.intv,.sm,.bgrid,.left,.right,tr,td{page-break-inside:auto !important}";
-      css += " .left{line-height:1.24 !important} .right{line-height:1.26 !important}";
-      css += " .sec{margin-bottom:1.6pt !important}";
-      css += " .intv{margin-bottom:1.6pt !important;line-height:1.24 !important}";
-      css += " .sm{margin-bottom:1.4pt !important;line-height:1.22 !important}";
-      css += " .hdr{margin-bottom:2pt !important}";
+      css += " h1,h2,h3{margin:0 !important;padding:0 !important;line-height:1.15 !important;font-family:inherit !important}";
       return { body: document.body.innerHTML, style: css };
     });
     if (!styleBlock) styleBlock = res.style;
