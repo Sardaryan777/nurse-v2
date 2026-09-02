@@ -73,7 +73,10 @@ async function waitForSettle(page, timeout) {
  * @returns {Promise<{pdfs:Array,noteCount:number,skippedDates:string[],certPeriod:object}>}
  */
 export async function runGenerator(opts) {
-  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, visits, nurses = {}, bid = false, wound = false, word = false } = opts;
+  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, nurses = {}, bid = false, wound = false, word = false, requestedNotes = 0 } = opts;
+  let visits = opts.visits || [];
+  // "9 notes" with no dates: generate that many undated notes.
+  const undated = visits.length === 0 && requestedNotes > 0;
 
   // Write PDF to a temp file so the native file input can accept it.
   const tmpPdf = path.join(os.tmpdir(), `poc-${Date.now()}.pdf`);
@@ -101,16 +104,18 @@ export async function runGenerator(opts) {
 
     // 3. Send the full visit list (AM+PM duplicates preserved, each visit may
     //    carry its own nurseName) + BID + Wound flags from the email subject.
-    await page.evaluate((vlist, nmap, bidFlag, woundFlag) => {
-      if (window.__automation.setVisits) window.__automation.setVisits(vlist);
+    await page.evaluate((vlist, nmap, bidFlag, woundFlag, isUndated) => {
+      if (!isUndated && window.__automation.setVisits) window.__automation.setVisits(vlist);
       if (window.__automation.setVisitNurses) window.__automation.setVisitNurses(nmap);
       if (window.__automation.setBID) window.__automation.setBID(bidFlag);
       if (window.__automation.setWound) window.__automation.setWound(woundFlag);
-    }, visits, nurses, bid, wound);
+    }, visits, nurses, bid, wound, undated);
 
     // Give React a moment to commit state.
     await sleep(500);
-    await waitForState(page, s => s.bulkCount === visits.length, { timeout: 15000, label: "visits applied" });
+    if (!undated) {
+      await waitForState(page, s => s.bulkCount === visits.length, { timeout: 15000, label: "visits applied" });
+    }
 
     // 4. Extract the 485 (needed before generation can run).
     await page.evaluate(() => window.__automation.extract());
@@ -119,6 +124,25 @@ export async function runGenerator(opts) {
     // Re-assert agency name (extraction clears poc/notes but not agency; safe to repeat).
     await page.evaluate((a) => window.__automation.setAgency(a), agencyName || "");
     await sleep(300);
+
+    // 4b. UNDATED MODE: the email asked for N notes with no dates. The cert
+    //     period is only known after extraction, so build N dates inside it
+    //     (keeps the cert gate and visit ordering happy) and tell the page to
+    //     print the DATE / TIME IN-OUT fields blank.
+    if (undated) {
+      const st = await page.evaluate(() => window.__automation.getState());
+      visits = spreadVisits(requestedNotes, st.certPeriod || {}, nurseName || "");
+      console.log(`Undated request: generating ${visits.length} note(s); DATE/TIME left blank.`);
+      const ok = await page.evaluate((vlist) => {
+        if (!window.__automation.setBlankDates) return false;
+        window.__automation.setBlankDates(true);
+        window.__automation.setVisits(vlist);
+        return true;
+      }, visits);
+      if (!ok) throw new Error("This generator build does not support undated notes — upload the latest App.jsx to the website.");
+      await sleep(500);
+      await waitForState(page, s => s.bulkCount === visits.length, { timeout: 15000, label: "undated visits applied" });
+    }
 
     // 5. Click Generate and wait for it to settle.
     // Each note is its own Claude call, so scale the timeout with the number of
@@ -177,6 +201,40 @@ export async function runGenerator(opts) {
     await browser.close();
     fs.unlink(tmpPdf).catch(() => {});
   }
+}
+
+// Build N visit dates spread evenly across the certification period. Used for
+// undated requests ("9 notes"): the pipeline still needs real dates for the
+// cert gate, ordering and discharge logic, but the notes print them blank.
+function spreadVisits(n, certPeriod, nurseName) {
+  const parse = (str) => {
+    if (!str) return null;
+    const parts = String(str).trim().split("/");
+    if (parts.length === 3) {
+      const d = new Date(+parts[2], +parts[0] - 1, +parts[1]);
+      return isNaN(d) ? null : d;
+    }
+    const d = new Date(str);
+    return isNaN(d) ? null : d;
+  };
+  const fmt = (d) =>
+    String(d.getMonth() + 1).padStart(2, "0") + "/" +
+    String(d.getDate()).padStart(2, "0") + "/" + d.getFullYear();
+
+  let start = parse(certPeriod.start);
+  let end = parse(certPeriod.end);
+  if (!start) { start = new Date(); start.setHours(12, 0, 0, 0); }
+  if (!end || end <= start) { end = new Date(start.getTime() + (n - 1) * 7 * 86400000); }
+
+  const span = end.getTime() - start.getTime();
+  const step = n > 1 ? Math.floor(span / (n - 1)) : 0;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date(start.getTime() + step * i);
+    d.setHours(12, 0, 0, 0);
+    out.push({ date: fmt(d), timeIn: "", timeOut: "", nurseName });
+  }
+  return out;
 }
 
 // ── WORD (.docx) OUTPUT ─────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ import { runGenerator, renderCorrectedBatch } from "./generator.js";
 import { parseCorrectionInstructions, applyCorrections, summarizeBatch } from "./correction.js";
 import { mapNotesPdf, splicePages, summarizePages, classifyPdfs } from "./pagesplice.js";
 
-const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const GENERATOR_URL = process.env.GENERATOR_URL;
 
 // Avoid double-processing within a single process lifetime.
@@ -320,12 +320,15 @@ async function processMessage(gmail, messageRef) {
   log(`  Agency: ${agencyName || "(none found)"}`);
 
   // 4. Nurses + visits from the email body (each visit may have its own nurse).
-  const { nurseName, visits } = await extractVisitsFromEmail(msg.bodyText || "");
+  const { nurseName, visits, noteCount: requestedNotes = 0 } = await extractVisitsFromEmail(msg.bodyText || "");
   const uniqueNurses = [...new Set(visits.map(v => v.nurseName).filter(Boolean))];
   log(`  Default nurse: ${nurseName || "(none)"} · Visits: ${visits.length} · Nurses on schedule: ${uniqueNurses.join(", ") || "(none)"}`);
-  if (!visits.length) {
-    log("  No visit dates found in email body — skipping (leaving unread for manual review).");
+  if (!visits.length && !requestedNotes) {
+    log("  No visit dates and no note count found in email body — skipping (leaving unread for manual review).");
     return;
+  }
+  if (!visits.length) {
+    log(`  No dates given — email asked for ${requestedNotes} note(s); DATE/TIME will be left blank.`);
   }
 
   // Keep the FULL visit list (AM+PM duplicates preserved for BID). Build a
@@ -358,7 +361,8 @@ async function processMessage(gmail, messageRef) {
     nurses,
     bid,
     wound,
-    word
+    word,
+    requestedNotes
   });
 
   const certLabel = (certPeriod.start || certPeriod.end)
@@ -385,7 +389,11 @@ async function processMessage(gmail, messageRef) {
     let text =
       `Hello,\n\nAttached is 1 combined ${word ? "Word document" : "PDF"} containing the ${noteCount} generated clinical note${noteCount > 1 ? "s" : ""} ` +
       `for ${nurseLabel}${agencyName ? " (" + agencyName + ")" : ""}${bid ? " (BID patient)" : ""}.\n\n` +
-      `Visit dates generated (oldest → newest): ${dates.filter(d => !skippedDates.includes(d)).join(", ")}\n`;
+      (requestedNotes && !dates.length
+        ? `No dates were given, so the DATE and TIME IN/OUT fields were left blank on each note.
+`
+        : `Visit dates generated (oldest -> newest): ${dates.filter(d => !skippedDates.includes(d)).join(", ")}
+`);
     if (skippedDates.length) {
       text +=
         `\n⚠️ The following date(s) were NOT generated because they fall OUTSIDE the ` +

@@ -112,6 +112,9 @@ export async function extractVisitsFromEmail(bodyText) {
       'Return ONLY compact JSON of the exact form: ' +
       '{"nurseName":"","visits":[{"date":"MM/DD/YYYY","timeIn":"HH:MM AM","timeOut":"HH:MM PM","nurseName":""}]} ' +
       "where the top-level nurseName is the default/primary nurse (or the only one). " +
+      "IF THE EMAIL GIVES NO DATES AT ALL but asks for a NUMBER of notes (e.g. \"9\", \"8 notes\", \"make nine visits\"), return an empty visits array and set noteCount to that number: "
+      + '{"nurseName":"","visits":[],"noteCount":9}. ' +
+      "Written-out numbers count (nine -> 9). Use noteCount only when there are no dates. " +
       "No markdown, no backticks, no commentary.",
     messages: [{ role: "user", content: `Email body:\n\n${bodyText}` }]
   });
@@ -126,7 +129,10 @@ export async function extractVisitsFromEmail(bodyText) {
   for (const v of visits) {
     v.nurseName = (v.nurseName || "").trim() || defaultNurse;
   }
-  return { nurseName: defaultNurse, visits };
+  // No dates, just a count ("9 notes") -> caller generates that many
+  // undated notes.
+  const noteCount = Number(data.noteCount) > 0 ? Math.min(60, Math.floor(Number(data.noteCount))) : 0;
+  return { nurseName: defaultNurse, visits, noteCount };
 }
 
 // Convert "HH:MM AM" -> { h, m, ap } for the generator bridge. null-safe.
