@@ -250,24 +250,43 @@ async function buildWordDoc(browser, notesHTML, filename) {
   for (const note of notesHTML) {
     await p.setContent(note.html, { waitUntil: "domcontentloaded", timeout: 30000 });
     const res = await p.evaluate(() => {
-      // Word has no flexbox: rebuild the two columns as a table.
+      // Word has no flexbox. Rebuild the whole note as ONE table:
+      //   row 1 = the centred header spanning both columns
+      //   row 2 = the left / right columns
+      // Keeping the header inside the table stops Word pushing the columns to
+      // page 2 and leaving the header alone on page 1.
       const cols = document.querySelector(".cols");
       if (cols) {
         const left = cols.querySelector(".left");
         const right = cols.querySelector(".right");
+        const hdr = document.querySelector(".hdr");
+
         const tbl = document.createElement("table");
         tbl.setAttribute("width", "100%");
         tbl.setAttribute("cellspacing", "0");
         tbl.setAttribute("cellpadding", "0");
-        tbl.style.cssText = "width:100%;border-collapse:collapse;border-top:2pt solid #000";
+        tbl.style.cssText = "width:100%;border-collapse:collapse;table-layout:fixed";
+
+        if (hdr) {
+          const trH = document.createElement("tr");
+          const tdH = document.createElement("td");
+          tdH.setAttribute("colspan", "2");
+          tdH.style.cssText = "text-align:center;padding-bottom:3pt";
+          tdH.innerHTML = hdr.innerHTML;
+          trH.appendChild(tdH);
+          tbl.appendChild(trH);
+          hdr.remove();
+        }
+
         const tr = document.createElement("tr");
+        tr.style.cssText = "page-break-inside:auto";
         const td1 = document.createElement("td");
         td1.setAttribute("width", "40%");
-        td1.style.cssText = "width:40%;vertical-align:top;padding-right:6pt;border-right:1pt solid #666;font-size:8.2pt;line-height:1.32";
+        td1.style.cssText = "width:40%;vertical-align:top;padding-right:6pt;border-right:1pt solid #666;border-top:2pt solid #000;font-size:8.2pt;line-height:1.32";
         td1.innerHTML = left ? left.innerHTML : "";
         const td2 = document.createElement("td");
         td2.setAttribute("width", "60%");
-        td2.style.cssText = "width:60%;vertical-align:top;padding-left:6pt;font-size:8.4pt;line-height:1.35";
+        td2.style.cssText = "width:60%;vertical-align:top;padding-left:6pt;border-top:2pt solid #000;font-size:8.4pt;line-height:1.35";
         td2.innerHTML = right ? right.innerHTML : "";
         tr.appendChild(td1); tr.appendChild(td2); tbl.appendChild(tr);
         cols.replaceWith(tbl);
@@ -286,6 +305,8 @@ async function buildWordDoc(browser, notesHTML, filename) {
         }
         return chunk.slice(j);
       }).join("");
+      // These would make Word shove whole blocks onto the next page.
+      css += " .sec,.intv,.sm,.bgrid{page-break-inside:auto !important}";
       return { body: document.body.innerHTML, style: css };
     });
     if (!styleBlock) styleBlock = res.style;
