@@ -171,7 +171,7 @@ export async function runGenerator(opts) {
     }
 
     if (skippedDates.length) console.log(`Skipped ${skippedDates.length} date(s) outside cert period: ${skippedDates.join(", ")}`);
-    console.log(`Merged ${noteCount} note(s) into 1 PDF: ${mergedName}`);
+    console.log(`Delivered 1 ${word ? "Word document" : "merged PDF"}: ${pdfs[0].filename} (${noteCount} note(s)).`);
     return { pdfs, noteCount, skippedDates, certPeriod, batch };
   } finally {
     await browser.close();
