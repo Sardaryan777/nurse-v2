@@ -8,7 +8,6 @@ import os from "os";
 import path from "path";
 import { PDFDocument } from "pdf-lib";
 import { embedBatchInPdf } from "./batchstore.js";
-import HTMLtoDOCX from "html-to-docx";
 
 const launchOpts = {
   headless: "new",
@@ -90,6 +89,8 @@ export async function runGenerator(opts) {
 
     // Wait for the automation bridge to be installed by React.
     await page.waitForFunction(() => window.__automation?.ready === true, { timeout: 30000 });
+    const siteVersion = await page.evaluate(() => window.__automation.version || 0);
+    console.log(`Generator site bridge version: ${siteVersion}`);
 
     // 1. Upload the PDF into the upload section (native file input).
     const fileInput = await page.waitForSelector('[data-testid="file-input"]', { timeout: 15000 });
@@ -139,7 +140,7 @@ export async function runGenerator(opts) {
         window.__automation.setVisits(vlist);
         return true;
       }, visits);
-      if (!ok) throw new Error("This generator build does not support undated notes — upload the latest App.jsx to the website.");
+      if (!ok) throw new Error(`The generator website is out of date (bridge version ${siteVersion}, needs 17+). Upload frontend/src/App.jsx to GitHub and wait for the nurse-v2 service to redeploy, then resend this email.`);
       await sleep(500);
       await waitForState(page, s => s.bulkCount === visits.length, { timeout: 15000, label: "undated visits applied" });
     }
@@ -185,7 +186,7 @@ export async function runGenerator(opts) {
     let pdfs;
     if (word) {
       // Editable Word document instead of PDF.
-      pdfs = [await buildWordDoc(browser, notesHTML, `${baseName}.docx`)];
+      pdfs = [await buildWordDoc(browser, notesHTML, `${baseName}.doc`)];
     } else {
       const mergedPdf = await renderNotesToPdf(browser, notesHTML, `${baseName}.pdf`);
       // Tuck the structured batch into the PDF's metadata so a later Correction
@@ -249,6 +250,7 @@ async function buildWordDoc(browser, notesHTML, filename) {
   for (const note of notesHTML) {
     await p.setContent(note.html, { waitUntil: "domcontentloaded", timeout: 30000 });
     const res = await p.evaluate(() => {
+      // Word has no flexbox: rebuild the two columns as a table.
       const cols = document.querySelector(".cols");
       if (cols) {
         const left = cols.querySelector(".left");
@@ -271,29 +273,38 @@ async function buildWordDoc(browser, notesHTML, filename) {
         cols.replaceWith(tbl);
       }
       const st = document.querySelector("style");
-      return { body: document.body.innerHTML, style: st ? st.innerHTML : "" };
+      // Word cannot parse @page / @media rules - drop them, keep the rest.
+      let css = st ? st.innerHTML : "";
+      css = css.split("@").map((chunk, i) => {
+        if (i === 0) return chunk;
+        const brace = chunk.indexOf("{");
+        if (brace === -1) return "";
+        let depth = 0, j = brace;
+        for (; j < chunk.length; j++) {
+          if (chunk[j] === "{") depth++;
+          else if (chunk[j] === "}") { depth--; if (depth === 0) { j++; break; } }
+        }
+        return chunk.slice(j);
+      }).join("");
+      return { body: document.body.innerHTML, style: css };
     });
     if (!styleBlock) styleBlock = res.style;
     bodies.push(res.body);
   }
   await p.close();
 
-  // One document, one note per page.
-  const css = '.pgbrk{page-break-before:always}table{border-collapse:collapse}';
-  const head = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + styleBlock + css + '</style></head><body>';
-  const body = bodies.map((b, i) => (i ? '<div class="pgbrk"></div>' + b : b)).join("");
-  const html = head + body + '</body></html>';
+  // Word-native HTML: Word opens and edits this directly, and renders the CSS
+  // properly (no third-party docx builder, no XML escaping problems).
+  const NS = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">';
+  const MSO = '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->';
+  const PAGE = '@page WordSection1 {size:210mm 297mm; margin:10mm 8mm 10mm 8mm;} div.WordSection1 {page:WordSection1;} table{border-collapse:collapse}';
+  const BRK = '<br clear="all" style="page-break-before:always">';
+  const head = NS + '<head><meta charset="utf-8">' + MSO + '<style>' + PAGE + styleBlock + '</style></head><body><div class="WordSection1">';
+  const body = bodies.map((b, i) => (i ? BRK + b : b)).join("");
+  const html = head + body + '</div></body></html>';
 
-  // A4 in TWIPs (1mm = 56.7): 210x297mm page, 8mm sides / 10mm top-bottom.
-  const buffer = await HTMLtoDOCX(html, null, {
-    orientation: "portrait",
-    pageSize: { width: 11906, height: 16838 },
-    margins: { top: 567, bottom: 567, left: 454, right: 454 },
-    font: "Times New Roman",
-    fontSize: 17          // half-points ~= 8.5pt base
-  });
   console.log(`Built Word document: ${filename} (${notesHTML.length} note(s)).`);
-  return { filename, buffer: Buffer.from(buffer), mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+  return { filename, buffer: Buffer.from(html, "utf8"), mimeType: "application/msword" };
 }
 
 // ── THE ONE PDF LAYOUT ENGINE ───────────────────────────────────────────────
