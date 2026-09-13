@@ -205,3 +205,61 @@ export function countFromText(text) {
   if (words[only]) return words[only];
   return 0;
 }
+
+
+// Subject "Injection" / "IV" / "Infusion": read EVERY attached document (485,
+// 487/addendum, physician or infusion orders, med profile) and find what has to
+// be injected or infused, plus the IV access device and its care orders.
+export async function extractInjectionOrders(docs) {
+  const anthropic = client();
+  const content = [];
+  for (const d of docs) {
+    content.push({ type: "text", text: "Document: " + (d.filename || "attachment.pdf") });
+    content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: d.buffer.toString("base64") } });
+  }
+  content.push({ type: "text", text: [
+    "You are reading home-health documents for ONE patient.",
+    "Find every ACTIVE order for a medication given by injection or infusion: IV, IV push, IVPB, continuous infusion,",
+    "IM, subcutaneous, or through a PICC, midline, port, or peripheral IV.",
+    "Read ALL documents: the 485 medication list and orders, any 487 / addendum, physician orders, infusion or pharmacy",
+    "orders, and medication profiles.",
+    "SKIP anything discontinued, completed, on hold, or given only at the physician office, clinic, or infusion center -",
+    "those are not given by the home health nurse.",
+    "For each order capture: name, dose, route, frequency, duration (e.g. x 14 days or until a date), dilution",
+    "(e.g. in 100 mL NS), rate (e.g. over 30 minutes), indication (the diagnosis it treats), special instructions,",
+    "and which document/page it came from.",
+    "Also capture the IV access device: type (PICC, midline, port, peripheral IV), location (e.g. right upper arm),",
+    "flush order (e.g. NS 10 mL before and after), and dressing change order.",
+    "List the MAIN injectable or IV medication FIRST.",
+    'Return ONE JSON object only: {"orders":[{"name":"","dose":"","route":"","frequency":"","duration":"","dilution":"","rate":"","indication":"","instruction":"","source":""}],"access":{"type":"","location":"","flush":"","dressing":""},"notes":""}',
+    "Use empty strings for anything not stated - never invent a dose, rate, or device.",
+    "If there is no active injectable or IV order, return an empty orders array and say why in notes.",
+    "No markdown, no commentary, no second object."
+  ].join(" ") });
+
+  const resp = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 3000,
+    temperature: 0,
+    messages: [{ role: "user", content }]
+  });
+  const text = (resp.content || []).map(b => b.text || "").join("");
+  const data = parseJSON(text);
+  const orders = (Array.isArray(data.orders) ? data.orders : []).filter(o => o && String(o.name || "").trim());
+  const device = data.access || {};
+  if (!orders.length) return { found: false, orders: [], accessDevice: device, notes: String(data.notes || "") };
+
+  const o = orders[0];
+  const str = v => String(v || "").trim();
+  return {
+    found: true,
+    orders,
+    accessDevice: device,
+    notes: str(data.notes),
+    name: str(o.name), dose: str(o.dose), route: str(o.route), frequency: str(o.frequency),
+    duration: str(o.duration), dilution: str(o.dilution), rate: str(o.rate),
+    indication: str(o.indication), instruction: str(o.instruction), source: str(o.source),
+    access: [str(device.type), str(device.location)].filter(Boolean).join(" "),
+    flush: str(device.flush), dressing: str(device.dressing)
+  };
+}

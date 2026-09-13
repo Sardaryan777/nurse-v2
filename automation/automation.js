@@ -17,8 +17,8 @@ import {
   findBatchInThread
 } from "./gmail.js";
 import { readBatchFromPdf } from "./batchstore.js";
-import { extractAgencyName, extractVisitsFromEmail, splitTime } from "./extract.js";
-import { runGenerator, renderCorrectedBatch } from "./generator.js";
+import { extractAgencyName, extractVisitsFromEmail, splitTime, extractInjectionOrders } from "./extract.js";
+import { runGenerator, renderCorrectedBatch, mergePdfs } from "./generator.js";
 import { parseCorrectionInstructions, applyCorrections, summarizeBatch } from "./correction.js";
 import { mapNotesPdf, splicePages, summarizePages, classifyPdfs } from "./pagesplice.js";
 
@@ -368,11 +368,58 @@ async function processMessage(gmail, messageRef) {
   const word = /\bword\b/i.test(msg.subject || "");
   if (word) log(`  "Word" in subject → Word (.docx) output.`);
 
+  // "Injection" / "Infusion" in the SUBJECT (bare "IV" is deliberately NOT a
+  // trigger: it would collide with "Stage IV" in wound subjects) → read EVERY attached document,
+  // find what has to be injected or infused, and build the notes around that order.
+  const injectionMode = /(^|[^a-z])(injections?|infusions?)([^a-z]|$)/i.test(msg.subject || "");
+  let injection = null;
+  let genPdfBuffer = msg.pdf.buffer;
+  let genPdfName = msg.pdf.filename;
+  if (injectionMode) {
+    const docs = (msg.pdfs || []).filter(p => !/^notes?[-_]/i.test(p.filename || ""));
+    log(`  "Injection" in subject → reading ${docs.length} attached document(s) for injection/IV orders.`);
+    injection = await extractInjectionOrders(docs);
+    if (!injection.found) {
+      const NL = String.fromCharCode(10);
+      const text = [
+        "Hello,", "",
+        "No notes were generated. The subject asked for injection/IV notes, but no ACTIVE injectable or IV order",
+        "was found in the attached document(s):",
+        ...docs.map(d => "  - " + d.filename), "",
+        injection.notes ? "Details: " + injection.notes : "",
+        "",
+        "Please attach the document that contains the injection/IV order (for example the 487, physician orders,",
+        "or infusion/pharmacy orders) and send again - or remove the word Injection from the subject to get",
+        "regular notes.", "",
+        "- Automated Clinical Note Generator"
+      ].join(NL);
+      await replyWithAttachments(gmail, msg, { text, attachments: [] });
+      log("  No active injectable/IV order found in the attached documents — replied.");
+      return;
+    }
+    const injLine = [injection.name, injection.dose, injection.route, injection.frequency].filter(Boolean).join(" ");
+    log(`  Injection order: ${injLine}${injection.access ? " via " + injection.access : ""}${injection.source ? " (source: " + injection.source + ")" : ""}`);
+
+    // Give the generator ALL documents (485 first) so the Plan of Care extraction
+    // sees the 487 / orders too. Stay within the model's PDF page limit.
+    if (docs.length > 1) {
+      const ordered = [...docs].sort((a, b) => (/485/.test(b.filename) ? 1 : 0) - (/485/.test(a.filename) ? 1 : 0));
+      const merged = await mergePdfs(ordered.map(d => d.buffer));
+      if (merged.pageCount > 0 && merged.pageCount <= 95) {
+        genPdfBuffer = merged.buffer;
+        genPdfName = "all-documents.pdf";
+        log(`  Merged ${docs.length} documents (${merged.pageCount} pages) for the generator.`);
+      } else {
+        log(`  Merged documents are ${merged.pageCount} pages — too large, using the first PDF only.`);
+      }
+    }
+  }
+
   // 5. Drive the generator site -> ONE merged PDF (+ any dates skipped for cert period).
   const { pdfs, noteCount = 0, skippedDates = [], certPeriod = { start: "", end: "" }, batch = null } = await runGenerator({
     url: GENERATOR_URL,
-    pdfBuffer: msg.pdf.buffer,
-    pdfFilename: msg.pdf.filename,
+    pdfBuffer: genPdfBuffer,
+    pdfFilename: genPdfName,
     agencyName,
     nurseName,
     visits,
@@ -380,7 +427,8 @@ async function processMessage(gmail, messageRef) {
     bid,
     wound,
     word,
-    requestedNotes
+    requestedNotes,
+    injection
   });
 
   const certLabel = (certPeriod.start || certPeriod.end)
@@ -416,6 +464,12 @@ async function processMessage(gmail, messageRef) {
       text +=
         `\n⚠️ The following date(s) were NOT generated because they fall OUTSIDE the ` +
         `certification period (${certLabel}):\n${skippedDates.join(", ")}\n`;
+    }
+    if (injection && injection.found) {
+      const injUsed = [injection.name, injection.dose, injection.route, injection.frequency, injection.duration].filter(Boolean).join(" ");
+      text += String.fromCharCode(10) + "Injection/IV order documented in every note: " + injUsed +
+        (injection.access ? " via " + injection.access : "") +
+        (injection.source ? " (source: " + injection.source + ")" : "") + "." + String.fromCharCode(10);
     }
     text += word
       ? `

@@ -72,7 +72,7 @@ async function waitForSettle(page, timeout) {
  * @returns {Promise<{pdfs:Array,noteCount:number,skippedDates:string[],certPeriod:object}>}
  */
 export async function runGenerator(opts) {
-  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, nurses = {}, bid = false, wound = false, word = false, requestedNotes = 0 } = opts;
+  const { url, pdfBuffer, pdfFilename, agencyName, nurseName, nurses = {}, bid = false, wound = false, word = false, requestedNotes = 0, injection = null } = opts;
   let visits = opts.visits || [];
   // "9 notes" with no dates: generate that many undated notes.
   const undated = visits.length === 0 && requestedNotes > 0;
@@ -125,6 +125,19 @@ export async function runGenerator(opts) {
     // Re-assert agency name (extraction clears poc/notes but not agency; safe to repeat).
     await page.evaluate((a) => window.__automation.setAgency(a), agencyName || "");
     await sleep(300);
+
+    // 4a. INJECTION MODE: the worker found the injection / IV order across ALL
+    //     attached documents - hand it to the site so every note documents it.
+    if (injection && injection.found) {
+      const ok = await page.evaluate((o) => {
+        if (!window.__automation.setInjection) return false;
+        window.__automation.setInjection(o);
+        return true;
+      }, injection);
+      if (!ok) throw new Error(`The generator website is out of date (bridge version ${siteVersion}, needs 18+) and cannot do injection/IV notes. Upload frontend/src/App.jsx to GitHub, wait for the nurse-v2 service to redeploy, then resend this email.`);
+      await sleep(500);
+      await waitForState(page, s => s.injection === true, { timeout: 15000, label: "injection order applied" });
+    }
 
     // 4b. UNDATED MODE: the email asked for N notes with no dates. The cert
     //     period is only known after extraction, so build N dates inside it
@@ -202,6 +215,22 @@ export async function runGenerator(opts) {
     await browser.close();
     fs.unlink(tmpPdf).catch(() => {});
   }
+}
+
+// Merge several PDFs into one. Injection mode sends ALL attached documents to the
+// generator so the Plan-of-Care extraction sees the 487 / orders as well.
+export async function mergePdfs(buffers) {
+  const out = await PDFDocument.create();
+  for (const buf of buffers) {
+    try {
+      const src = await PDFDocument.load(buf, { ignoreEncryption: true });
+      const pages = await out.copyPages(src, src.getPageIndices());
+      pages.forEach(pg => out.addPage(pg));
+    } catch (e) {
+      console.log(`  Skipped an unreadable PDF while merging: ${e.message}`);
+    }
+  }
+  return { buffer: Buffer.from(await out.save()), pageCount: out.getPageCount() };
 }
 
 // Build N visit dates spread evenly across the certification period. Used for
