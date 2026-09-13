@@ -117,6 +117,15 @@ const BID_TEACHING = [
   "Reviewed proper glucometer technique: wash hands before testing, rotate puncture sites, record all results, and bring the log to MD appointments.",
   "Instructed on proper insulin storage: keep current pen at room temperature away from heat and sunlight, refrigerate unopened pens, and check expiration dates before use."
 ];
+// IV therapy teaching, rotated per visit day (subject "Injection" / "IV").
+const IV_TEACHING = [
+  "Instructed patient/caregiver to keep the IV site and dressing clean, dry, and intact, to cover it when bathing, and never to submerge it in water.",
+  "Instructed patient/caregiver on signs and symptoms of IV site infection or infiltration (redness, swelling, warmth, pain, drainage, leaking) and to report them to the agency or MD immediately.",
+  "Instructed patient/caregiver to report fever, chills, shortness of breath, chest pain, or a sudden change in condition, and to call 911 for severe symptoms.",
+  "Reviewed the purpose of the IV medication, the importance of completing the full ordered course, and side effects to report, including rash, itching, diarrhea, or swelling of the face or throat.",
+  "Instructed patient/caregiver to protect the IV line from pulling or kinking, to avoid heavy lifting or strenuous use of the affected arm, and never to flush or adjust the line themselves.",
+  "Reinforced hand hygiene before touching the IV site or supplies, and proper storage of IV medication and supplies as instructed by the pharmacy."
+];
 const INJ_SITES = ["abdomen RUQ","abdomen LUQ","abdomen RLQ","abdomen LLQ","right thigh","left thigh","right upper arm","left upper arm"];
 function getInjSite(index, leftArmRestricted) {
   const sites = leftArmRestricted ? INJ_SITES.filter(s => s !== "left upper arm") : INJ_SITES;
@@ -981,6 +990,7 @@ export default function App() {
   const [dates,      setDates]      = useState([]);
   const [dateTimes,  setDateTimes]  = useState({});
   const [skippedDates, setSkippedDates] = useState([]); // visit dates outside the cert period (not generated)
+  const [injectionOrder, setInjectionOrder] = useState(null); // subject "Injection": order found in ALL attached docs
   const [blankDates, setBlankDates] = useState(false); // "9 notes" with no dates -> leave DATE / TIME blank
   const [previewVS,  setPreviewVS]  = useState(()=>pickVS());
   const [bidPatient, setBidPatient] = useState(false);
@@ -1155,8 +1165,14 @@ export default function App() {
       const total = visits.length;
       const generated = [];
       const prevTopics = [];
-      const inj = poc.injectable || {};
-      const useInjection = bidPatient && inj.found;
+      // Injection source: an order the worker found in ALL attached documents
+      // (subject "Injection" / "IV") wins over the 485 extraction's injectable,
+      // and turns injection documentation on even without BID.
+      const injOverride = injectionOrder && injectionOrder.found ? injectionOrder : null;
+      const inj = injOverride || poc.injectable || {};
+      const useInjection = (bidPatient || !!injOverride) && !!inj.found;
+      const injRouteText = String((inj.route || "") + " " + (inj.access || "")).toLowerCase();
+      const isIV = /(^|[^a-z])(iv|ivpb|intravenous|infusion|picc|midline|port)([^a-z]|$)/.test(injRouteText);
       // Same-day visits (AM+PM) share topic + intervention text — only time/vitals/site differ
       const dayCache = {};   // dateKey -> {topic, intervention}
       const uniqueDays = [...new Set(visits.map(v=>v.dk))];
@@ -1230,7 +1246,18 @@ export default function App() {
 
         // Injection details for this visit
         let injInfo = "", injSentence = "", injSite = "", injText = "";
-        if (useInjection) {
+        if (useInjection && isIV) {
+          // IV THERAPY: the access device is fixed (not rotated like SC sites).
+          injSite = inj.access || "IV access per MD order";
+          const ivDrug = [inj.name, inj.dose, inj.route].filter(Boolean).join(" ");
+          const ivRate = [inj.dilution, inj.rate].filter(Boolean).join(", ");
+          const ivFlush = inj.flush || "normal saline per agency IV protocol";
+          const ivDress = inj.dressing ? "per order (" + inj.dressing + ")" : "per agency protocol";
+          const ivTeach = IV_TEACHING[dayIdx % IV_TEACHING.length];
+          injText = `SN assessed ${injSite} prior to infusion: site clean, dry, and intact with dressing secured; no redness, swelling, warmth, tenderness, drainage, or signs of infiltration or phlebitis noted. Line patency verified with positive blood return and flushed with ${ivFlush} without resistance. SN administered ${ivDrug}${ivRate ? " (" + ivRate + ")" : ""} as ordered by MD using aseptic technique; patient was monitored during and after the infusion and tolerated it without adverse reaction. Line flushed and secured after the infusion; dressing and site care maintained ${ivDress}. ${ivTeach}`;
+          injInfo = `IV THERAPY this visit: ${ivDrug}${inj.frequency ? ", " + inj.frequency : ""}${inj.duration ? ", " + inj.duration : ""}. Access: ${injSite}.${inj.indication ? " Indication: " + inj.indication + "." : ""}${inj.instruction ? " Order notes: " + inj.instruction + "." : ""} Make this visit's assessment reflect the patient's response to IV therapy for that indication (temperature, symptoms, the affected area) and the IV site condition. The IV administration paragraph is inserted automatically - do NOT write your own administration, flush, or site-assessment sentence.`;
+          injSentence = "";
+        } else if (useInjection) {
           injSite = getInjSite(i, poc.leftArmRestricted);
           // Deterministic injection documentation — matched to 485 order style (guaranteed in every note)
           const bidTeach = poc.isDiabetic ? " " + BID_TEACHING[dayIdx % BID_TEACHING.length] : "";
@@ -1248,7 +1275,7 @@ export default function App() {
           : "";
         // BID notes add a ~80-word injection paragraph → shorter AI base keeps
         // the total ≈ a normal note (fits one page at full font size).
-        const wordTarget = useInjection ? "120-190" : "180-320";
+        const wordTarget = useInjection ? (isIV ? "100-160" : "120-190") : "180-320";
         const basePrompt = woundMode ? WOUND_NOTE_PROMPT : NOTE_PROMPT;
         const prompt=basePrompt
           .replace(/\{WORDS\}/g,wordTarget)
@@ -1440,10 +1467,12 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 17, ready: true,
+      version: 18, ready: true,
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
+      // Injection / IV order the worker found across every attached document.
+      setInjection: (o) => setInjectionOrder(o && o.found ? o : null),
       setWound: (v) => { setWoundMode(!!v); if (v) setShowWoundFields(true); },
       // Undated batch: generate N notes but print no DATE / TIME IN-OUT.
       setBlankDates: (v) => setBlankDates(!!v),
@@ -1491,13 +1520,13 @@ export default function App() {
       getState: () => ({
         hasFile: !!file, extracting, generating, hasPoc: !!poc,
         agency: agencyName, nurse: snName, dates: dates.map(fmtDate),
-        bid: bidPatient, wound: woundMode, blankDates, bulkCount: bulkEntries.length,
+        bid: bidPatient, wound: woundMode, blankDates, injection: !!injectionOrder, bulkCount: bulkEntries.length,
         certPeriod: { start: poc?.certPeriodStart || "", end: poc?.certPeriodEnd || "" },
         skippedDates, noteCount: notes.length, status: genStatus, error
       }),
       getNotesHTML: () => notes.map(noteToHTML)
     };
-  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, skippedDates, blankDates, bidPatient, woundMode, bulkEntries, notes, genStatus, error]);
+  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, skippedDates, blankDates, injectionOrder, bidPatient, woundMode, bulkEntries, notes, genStatus, error]);
 
   // Stage badge
   const stageBadge = poc ? {
