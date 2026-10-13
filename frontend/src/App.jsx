@@ -996,6 +996,13 @@ export default function App() {
   const [bidPatient, setBidPatient] = useState(false);
   const [autoAMPM,   setAutoAMPM]   = useState(false);
   const [dischargeOn,setDischargeOn]= useState(false);
+  // SYNERGY_AUTOMATION mode. null for every existing caller: manual use, the
+  // email automation and its correction path all leave it null, because the
+  // only way out of null is setSynergyMode(), which no existing caller calls.
+  // Nothing in generateAll reads this yet — this release installs the gate
+  // only, so that the gate itself can be proved inert before any behaviour
+  // hangs off it.
+  const [synergyMode,setSynergyMode]= useState(null);
   const [bulkText,   setBulkText]   = useState("");
   const [bulkEntries,setBulkEntries]= useState([]); // parsed [{date,timeIn,timeOut}]
   const [file487,    setFile487]    = useState(null);
@@ -1020,7 +1027,11 @@ export default function App() {
 
   const handleFile = f => {
     if(!f)return;
-    setFile(f); setPoc(null); setNotes([]); setError(null);
+    // A new 485 is a new episode, so any Synergy episode plan from a previous
+    // one is dropped here. Both callers already launch a fresh browser per
+    // generation, so a plan cannot survive into another patient's run today;
+    // this closes the same hole for any future caller that reuses a page.
+    setFile(f); setPoc(null); setNotes([]); setError(null); setSynergyMode(null);
     if(f.type.startsWith("image/")){ const r=new FileReader(); r.onload=e=>setFilePreview(e.target.result); r.readAsDataURL(f); }
     else setFilePreview(null);
   };
@@ -1467,7 +1478,14 @@ export default function App() {
   };
   useEffect(() => {
     window.__automation = {
-      version: 18, ready: true,
+      version: 19, ready: true,
+      // Synergy automation only. Accepts the episode plan and stores it.
+      // No generation logic reads it in this release; it exists so the gate
+      // can be installed and verified inert before anything depends on it.
+      setSynergyMode: (plan) => {
+        setSynergyMode(plan && typeof plan === "object" ? plan : null);
+        return true;
+      },
       setAgency: (name) => setAgencyName(name),
       setNurse: (name) => setSnName(name),
       setBID: (v) => setBidPatient(!!v),
@@ -1522,11 +1540,14 @@ export default function App() {
         agency: agencyName, nurse: snName, dates: dates.map(fmtDate),
         bid: bidPatient, wound: woundMode, blankDates, injection: !!injectionOrder, bulkCount: bulkEntries.length,
         certPeriod: { start: poc?.certPeriodStart || "", end: poc?.certPeriodEnd || "" },
-        skippedDates, noteCount: notes.length, status: genStatus, error
+        skippedDates, noteCount: notes.length, status: genStatus, error,
+        // Lets a caller confirm the plan it sent was accepted. null for every
+        // caller that never sets it.
+        synergyMode: synergyMode ? { ...synergyMode } : null
       }),
       getNotesHTML: () => notes.map(noteToHTML)
     };
-  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, skippedDates, blankDates, injectionOrder, bidPatient, woundMode, bulkEntries, notes, genStatus, error]);
+  }, [file, extracting, generating, poc, agencyName, snName, dates, dateTimes, skippedDates, blankDates, injectionOrder, bidPatient, woundMode, bulkEntries, notes, genStatus, error, synergyMode]);
 
   // Stage badge
   const stageBadge = poc ? {
